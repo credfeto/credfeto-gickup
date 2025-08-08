@@ -1,9 +1,10 @@
 source:
   github:
-    - ssh: true # can be true or false
+    - token_file: /auth/github.token
+      ssh: true # can be true or false
       sshkey: /ssh/id_github
       wiki: true # includes wiki too
-      issues: true # back up issues, works only locally
+      issues: true # backup issues, works only locally
       starred: true # includes the user's starred repositories too
       gists: true # clone gists too
 
