@@ -1,9 +1,14 @@
 services:
-  runner:
+  backup:
     image: buddyspencer/gickup:latest
+    container_name: gickup-backup
+    hostname: gickup-backup
+    restart: always
+    stop_grace_period: 500s
+    stop_signal: SIGINT
     volumes:
       - ${PWD}/conf.yml:/gickup/conf.yml # Change the path of your local config ${PWD} is your current directory (where the docker-compose.yml is located)
-      - ${PWD}/ssh/id_github:/ssh/id_github:r
+      - ${PWD}/ssh:/ssh:r
       - gickup_data:/data
     command: ["/gickup/conf.yml"] # Changes the path of the internal bound config
     environment:
