@@ -1,8 +1,8 @@
 source:
   github:
     - token_file: /root/.auth/github.token
-      ssh: true # can be true or false
-      sshkey: /root/.ssh/id_github
+      #ssh: true # can be true or false
+      #sshkey: /root/.ssh/id_github
       wiki: false # includes wiki too
       issues: false # backup issues, works only locally
       starred: true # includes the user's starred repositories too
