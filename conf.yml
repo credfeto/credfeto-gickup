@@ -17,6 +17,7 @@ source:
       #sshkey: /root/.ssh/id_gitlab
       wiki: false
       issues: true
+      starred: true
 
 
 destination:
