@@ -5,7 +5,7 @@ source:
       sshkey: /root/.ssh/id_github
       wiki: false # includes wiki too
       issues: false # backup issues, works only locally
-      starred: false # includes the user's starred repositories too
+      starred: true # includes the user's starred repositories too
       gists: false # clone gists too
 
 destination:
