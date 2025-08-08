@@ -8,6 +8,15 @@ source:
       starred: true # includes the user's starred repositories too
       gists: false # clone gists too
 
+  gitlab:
+    - token_file: /root/.auth/gitlab.token
+      url: https://gitlab.com
+      #ssh: false
+      #sshkey: /root/.ssh/id_gitlab
+      wiki: true
+      issues: true
+
+
 destination:
   local:
     # Export this path from Docker with a volume to make it accessible and more permanent.
