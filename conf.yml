@@ -4,7 +4,7 @@ source:
       #ssh: true # can be true or false
       #sshkey: /root/.ssh/id_github
       wiki: false # includes wiki too
-      issues: false # backup issues, works only locally
+      issues: true # backup issues, works only locally
       starred: true # includes the user's starred repositories too
       gists: true # clone gists too
       includeorgs:
@@ -15,7 +15,7 @@ source:
       url: https://gitlab.com
       #ssh: false
       #sshkey: /root/.ssh/id_gitlab
-      wiki: true
+      wiki: false
       issues: true
 
 
