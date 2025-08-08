@@ -35,10 +35,10 @@ log: # optional
   timeformat: 2006-01-02 15:04:05 # you can use a custom time format, use https://yourbasic.org/golang/format-parse-string-time-date-example/ to check how date formats work in go
   # or set it as environment variable GICKUP_TIME_FORMAT
 
-  file-logging: # optional
-    dir: /root/logs # directory to log into
-    file: gickup.log # file to log into
-    maxage: 7 # keep logs for 7 days
+#  file-logging: # optional
+#    dir: /root/logs # directory to log into
+#    file: gickup.log # file to log into
+#    maxage: 7 # keep logs for 7 days
 
 
 cron: 1/12 1/3 * * * # optional - when cron is not provided, the program runs once and exits.
