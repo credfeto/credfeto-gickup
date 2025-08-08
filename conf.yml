@@ -1,8 +1,8 @@
 source:
   github:
-    - token_file: /auth/github.token
+    - token_file: /root/.auth/github.token
       ssh: true # can be true or false
-      sshkey: /ssh/id_github
+      sshkey: /root/.ssh/id_github
       wiki: false # includes wiki too
       issues: false # backup issues, works only locally
       starred: false # includes the user's starred repositories too
@@ -11,7 +11,7 @@ source:
 destination:
   local:
     # Export this path from Docker with a volume to make it accessible and more permanent.
-    - path: /data
+    - path: /root/data
       structured: true # checks repos out like hostersite/user|organization/repo
       zip: true # zips the repository after cloned and removes the repository afterward
       keep: 5 # only keeps x backups
