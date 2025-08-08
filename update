@@ -2,6 +2,9 @@
 
 [ -d "/data/gickup" ] || sudo mkdir -p "/data/gickup"
 
+git pull
+
+
 sudo docker volume create \
   --opt type=none \
   --opt o=bind \
