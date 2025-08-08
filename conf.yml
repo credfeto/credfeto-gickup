@@ -24,7 +24,7 @@ log: # optional
   # or set it as environment variable GICKUP_TIME_FORMAT
 
   file-logging: # optional
-    dir: /logs # directory to log into
+    dir: /root/logs # directory to log into
     file: gickup.log # file to log into
     maxage: 7 # keep logs for 7 days
 
