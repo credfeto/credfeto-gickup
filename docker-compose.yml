@@ -1,11 +1,16 @@
-version: "3"
 services:
   runner:
-    # build: . # If you want to Build the Image locally (You need the complete Repo on your PC)
     image: buddyspencer/gickup:latest
     volumes:
       - ${PWD}/conf.yml:/gickup/conf.yml # Change the path of your local config ${PWD} is your current directory (where the docker-compose.yml is located)
+      - ${PWD}/ssh/id_github:/ssh/id_github:r
+      - gickup_data:/data
     command: ["/gickup/conf.yml"] # Changes the path of the internal bound config
-    # Uncomment these 2 lines and set timezone appropriately to specify cron in local time instead of UTC.
-    # environment:
-    #   - TZ=America/Los_Angeles
+    environment:
+      - TZ=Europe/London
+
+volumes:
+  gickup_data:
+    name: gickup_data
+    external: true
+
