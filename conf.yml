@@ -6,7 +6,7 @@ source:
       wiki: false # includes wiki too
       issues: false # backup issues, works only locally
       starred: true # includes the user's starred repositories too
-      gists: false # clone gists too
+      gists: true # clone gists too
       includeorgs:
         - funfair-tech
 
