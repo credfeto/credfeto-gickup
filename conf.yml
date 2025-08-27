@@ -9,6 +9,7 @@ source:
       gists: true # clone gists too
       includeorgs:
         - funfair-tech
+        - credfeto
 
   gitlab:
     - token_file: /root/.auth/gitlab.token
@@ -41,4 +42,5 @@ log: # optional
 #    maxage: 7 # keep logs for 7 days
 
 
-cron: 27 3 * * * # optional - when cron is not provided, the program runs once and exits.
+#cron: 27 3 * * * # optional - when cron is not provided, the program runs once and exits.
+cron: */5 * * * *
