@@ -57,6 +57,6 @@ log: # optional
 #    maxage: 7 # keep logs for 7 days
 
 
-#cron: 27 3 * * * # optional - when cron is not provided, the program runs once and exits.
+cron: 27 3 * * * # optional - when cron is not provided, the program runs once and exits.
 #cron: 1/5 * * * *
-cron: 1/30 * * * *
+#cron: 1/30 * * * *
