@@ -10,7 +10,7 @@ source:
       filter:
         stars: 1
         lastactivity: 5y
-        excludearchived: false
+        excludearchived: true
         excludeforks: false
 
   gitlab:
