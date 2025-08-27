@@ -44,3 +44,4 @@ log: # optional
 
 #cron: 27 3 * * * # optional - when cron is not provided, the program runs once and exits.
 #cron: 1/5 * * * *
+cron: 1/30 * * * *
