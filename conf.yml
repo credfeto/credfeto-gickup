@@ -1,12 +1,12 @@
 source:
   github:
     - token_file: /root/.auth/github.token
-      #ssh: true # can be true or false
-      #sshkey: /root/.ssh/id_github
+      ssh: true # can be true or false
+      sshkey: /root/.ssh/id_github
       wiki: false # includes wiki too
       issues: true # backup issues, works only locally
       starred: true # includes the user's starred repositories too
-      gists: true # clone gists too
+      gists: false # clone gists too
       includeorgs:
         - funfair-tech
         - credfeto
@@ -43,4 +43,4 @@ log: # optional
 
 
 #cron: 27 3 * * * # optional - when cron is not provided, the program runs once and exits.
-cron: 1/5 * * * *
+#cron: 1/5 * * * *
