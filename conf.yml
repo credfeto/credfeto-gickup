@@ -13,6 +13,19 @@ source:
         excludearchived: true
         excludeforks: false
 
+    - token_file: /root/.auth/github.token
+      wiki: false # includes wiki too
+      issues: false # backup issues, works only locally
+      starred: false # includes the user's starred repositories too
+      gists: false # clone gists too
+      includeorgs:
+        - funfair-tech
+      filter:
+        stars: 1
+        lastactivity: 5y
+        excludearchived: false
+        excludeforks: false
+
   gitlab:
     - token_file: /root/.auth/gitlab.token
       url: https://gitlab.com
