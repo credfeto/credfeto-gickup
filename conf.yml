@@ -4,12 +4,14 @@ source:
       ssh: true # can be true or false
       sshkey: /root/.ssh/id_github
       wiki: false # includes wiki too
-      issues: true # backup issues, works only locally
+      issues: false # backup issues, works only locally
       starred: true # includes the user's starred repositories too
       gists: false # clone gists too
-      includeorgs:
-        - funfair-tech
-        - credfeto
+      filter:
+        stars: 1
+        lastactivity: 5y
+        excludearchived: false
+        excludeforks: false
 
   gitlab:
     - token_file: /root/.auth/gitlab.token
@@ -25,12 +27,12 @@ destination:
   local:
     # Export this path from Docker with a volume to make it accessible and more permanent.
     - path: /data
-      structured: true # checks repos out like hostersite/user|organization/repo
+      structured: true # checks repos out like hoster/site/user|organization/repo
       zip: false # zips the repository after cloned and removes the repository afterward
       #keep: 5 # only keeps x backups
       bare: true # clone the repositories as bare
       mirror: true # create mirror clones
-      lfs: true # clone lfs repos, !! ATTENTION !! git and git-lfs must be installed on the system!
+      lfs: false # clone lfs repos, !! ATTENTION !! git and git-lfs must be installed on the system!
 
 log: # optional
   timeformat: 2006-01-02 15:04:05 # you can use a custom time format, use https://yourbasic.org/golang/format-parse-string-time-date-example/ to check how date formats work in go
