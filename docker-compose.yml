@@ -1,4 +1,14 @@
 services:
+  watchtower:
+    image: containrrr/watchtower
+    container_name: watchtower
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: always
+    environment:
+      WATCHTOWER_NOTIFICATIONS_HOSTNAME: gickup
+      WATCHTOWER_POLL_INTERVAL: 3600
+
   backup:
     image: buddyspencer/gickup:latest
     container_name: gickup-backup
