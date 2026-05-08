@@ -29,4 +29,3 @@ volumes:
   gickup_data:
     name: gickup_data
     external: true
-
