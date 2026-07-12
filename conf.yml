@@ -1,3 +1,4 @@
+---
 source:
   github:
     - token_file: /root/.auth/github.token
@@ -48,7 +49,8 @@ destination:
       lfs: false # clone lfs repos, !! ATTENTION !! git and git-lfs must be installed on the system!
 
 log: # optional
-  timeformat: 2006-01-02 15:04:05 # you can use a custom time format, use https://yourbasic.org/golang/format-parse-string-time-date-example/ to check how date formats work in go
+  # you can use a custom time format, use https://yourbasic.org/golang/format-parse-string-time-date-example/ to check how date formats work in go
+  timeformat: 2006-01-02 15:04:05
   # or set it as environment variable GICKUP_TIME_FORMAT
 
 #  file-logging: # optional
