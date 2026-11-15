@@ -1,6 +1,9 @@
-# Changelog
+﻿# Changelog
 
 All notable changes to this project are documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 <!--
 Please ADD ALL Changes to the UNRELEASED SECTION and not a specific release
@@ -10,6 +13,7 @@ Please ADD ALL Changes to the UNRELEASED SECTION and not a specific release
 ### Security
 ### Added
 - Added .ai-instructions and ai/local/index.md from cs-template standard
+- Added investigation write-up on replacing gickup with a PAT-based bare git clone/fetch script (#9)
 ### Fixed
 - Fixed docker-compose.yml trailing blank line
 - Fixed conf.yml comment formatting
