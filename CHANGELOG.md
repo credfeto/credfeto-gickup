@@ -13,7 +13,7 @@ Please ADD ALL Changes to the UNRELEASED SECTION and not a specific release
 ### Security
 ### Added
 - Added .ai-instructions and ai/local/index.md from cs-template standard
-- Added investigation write-up on replacing gickup with a PAT-based bare git clone/fetch script (#9)
+- Added investigation of replacing gickup with a PAT-based bare git clone/fetch script, recommending adoption pending host memory measurement
 ### Fixed
 - Fixed docker-compose.yml trailing blank line
 - Fixed conf.yml comment formatting
