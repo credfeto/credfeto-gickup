@@ -13,3 +13,9 @@ sudo docker volume create \
 
 
 sudo docker compose pull && sudo docker compose up -d
+
+# Egress lockdown (firewalld policies); observation mode unless
+# GICKUP_FIREWALL_ENFORCE=true in .env. Runs after the containers exist,
+# because Docker creates the docker zone the policies refer to. See README.md,
+# "Host firewall".
+sudo "$(dirname "$(readlink -f "$0")")/firewall/configure" || exit 1

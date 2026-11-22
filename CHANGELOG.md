@@ -11,6 +11,7 @@ Please ADD ALL Changes to the UNRELEASED SECTION and not a specific release
 
 ## [Unreleased]
 ### Security
+- Host egress lockdown (`firewall/configure`, run by `update`): firewalld policies limit what the host and the containers may connect to (gickup: GitHub over SSH and HTTPS, gitlab.com), with CDN-fronted destinations kept in ipsets refreshed every 10 minutes. `gickup-firewall-sync.timer` re-applies it when the firewall config changes, and the daily `Repo: Update egress ranges` workflow refreshes the GitHub and Cloudflare ranges. Observation mode (log unmatched traffic, drop nothing) until `GICKUP_FIREWALL_ENFORCE=true`
 ### Added
 - Added .ai-instructions and ai/local/index.md from cs-template standard
 - Added investigation of replacing gickup with a PAT-based bare git clone/fetch script, recommending adoption pending host memory measurement
