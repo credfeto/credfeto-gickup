@@ -16,6 +16,7 @@ Please ADD ALL Changes to the UNRELEASED SECTION and not a specific release
 - Added .ai-instructions and ai/local/index.md from cs-template standard
 - Added investigation of replacing gickup with a PAT-based bare git clone/fetch script, recommending adoption pending host memory measurement
 ### Fixed
+- `./update` now re-runs itself after `git pull`, so changes to the update script take effect on the same run instead of the next one
 - Fixed docker-compose.yml trailing blank line
 - Fixed conf.yml comment formatting
 ### Changed
