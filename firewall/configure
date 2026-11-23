@@ -1,19 +1,21 @@
 #!/bin/sh
 
-# Locks the gickup host's egress down with firewalld policies, like the DNS
-# servers. Called by ../update as root.
+# Locks the gickup host's egress down, like the DNS servers. Called by
+# ../update as root.
 #
-# Two policies, evaluated before the zones:
-#   gku-egress          HOST -> ANY: what the host itself may connect to.
-#   gku-egress-docker   docker -> public: what the containers (gickup and
-#                       Watchtower) may connect to.
-# Ingress needs nothing extra: the containers publish no ports, and SSH is
-# the public zone's own rule set, managed by the host's base configuration.
+# The rules are one nftables table, inet gku_egress, built and loaded by
+# firewall/egress (see there): host_out for what the host itself may connect
+# to, docker_fwd for what the containers (gickup and Watchtower) may connect
+# to. The whole table, address sets included, is replaced in one nft
+# transaction, so a refresh never reloads firewalld and a failed load keeps
+# the previous rules. firewalld still owns the base zones; ingress needs
+# nothing extra (the containers publish no ports, and SSH is the public
+# zone's own rule set, managed by the host's base configuration).
 #
-# GICKUP_FIREWALL_ENFORCE=true in ../.env is the single enforcement knob: the
-# policies' target becomes DROP. Otherwise (the default) unmatched traffic
-# still flows and is only logged, with the prefixes "gku-egress-unmatched: "
-# and "gku-egress-docker-unmatched: ". The same rules serve both modes: run in
+# GICKUP_FIREWALL_ENFORCE=true in ../.env is the single enforcement knob:
+# unmatched new connections are dropped. Otherwise (the default) they still
+# flow and are only logged, with the prefixes "gku-egress-unmatched: " and
+# "gku-egress-docker-unmatched: ". The same rules serve both modes: run in
 # observation mode, check the log for anything legitimate, then enforce.
 
 set -eu
@@ -30,8 +32,8 @@ info() {
 [ "$(id -u)" -eq 0 ] || die "must run as root"
 
 # One run at a time: gickup-firewall-sync.timer can fire while ./update (or
-# a manual run) is still configuring, and concurrent firewall-cmd changes would
-# trip over each other.
+# a manual run) is still configuring, and concurrent firewall changes would trip
+# over each other.
 exec 9> /run/lock/credfeto-gickup-firewall.lock
 flock 9
 
@@ -43,201 +45,43 @@ env_value() {
     grep -E "^[[:space:]]*$1[[:space:]]*=" "${ENV_FILE}" | tail -n 1 | cut -d= -f2- | sed 's/^[[:space:]]*//;s/[[:space:]]*$//;s/^"//;s/"$//'
 }
 
-TARGET="CONTINUE"
+ENFORCE="false"
 if [ "$(env_value GICKUP_FIREWALL_ENFORCE)" = "true" ]; then
-    TARGET="DROP"
+    ENFORCE="true"
 fi
 
-# The reverse proxies (Traefik): the Docker Hub mirror, the pacman cache and
-# metrics shipping.
-PROXIES_V4="192.168.150.250 192.168.150.251"
-PROXIES_V6="2a02:8010:61d5:150::250 2a02:8010:61d5:150::251"
-# The fleet's DNS servers.
-DNS_V4="192.168.42.101 192.168.42.102 192.168.42.103 192.168.42.104 192.168.42.105 192.168.42.106"
-DNS_V6="2a02:8010:61d5:42::101 2a02:8010:61d5:42::102 2a02:8010:61d5:42::103 2a02:8010:61d5:42::104 2a02:8010:61d5:42::105 2a02:8010:61d5:42::106"
-# Central logging (journald uploads to VictoriaLogs on monitoring.lan).
-LOGS_V4="192.168.160.134"
-# NTP is the router's address on this host's VLAN, i.e. the default gateway.
-NTP_V4="$(ip -4 route show default | awk '/^default/ {print $3; exit}')"
-[ -n "${NTP_V4}" ] || die "no IPv4 default gateway to use as the NTP server"
-# GitHub Pages / raw content / release assets (Fastly).
-FASTLY="185.199.108.0/22 2606:50c0::/32"
-
-# Dynamic (CDN-fronted) destinations, kept fresh by refresh-egress-ipsets.
-# Keep in sync with DOMAIN_SLUGS there. ghnet and cfnet are the published
-# GitHub and Cloudflare ranges (hash:net).
-# The host pulls images itself (through the mirror, falling back to Docker Hub
-# and ghcr.io directly).
-HOST_SLUGS="github ghnet cfnet chaotic pkgstats archwkd ghcr ghcrpkg dhreg dhauth dhcdn"
-# gickup mirrors from GitHub (git over SSH and HTTPS, plus the API) and
-# gitlab.com (HTTPS, behind Cloudflare); Watchtower checks Docker Hub for new
-# images.
-CONTAINER_SLUGS="github ghnet cfnet gitlab dhreg dhauth dhcdn"
-ALL_SLUGS="github ghnet cfnet chaotic pkgstats archwkd ghcr ghcrpkg dhreg dhauth dhcdn gitlab"
-
-CHANGED=false
-finish() {
-    if [ "${CHANGED}" = "true" ]; then
-        firewall-cmd --reload > /dev/null
-        CHANGED=false
-    fi
-}
-trap 'finish; exit 130' INT HUP TERM
-trap 'finish' EXIT
-
-ensure_policy() {
-    NAME="$1"
-    FROM="$2"
-    TO="$3"
-    if ! firewall-cmd --permanent --info-policy="${NAME}" > /dev/null 2>&1; then
-        firewall-cmd --permanent --new-policy="${NAME}" > /dev/null || die "Failed to create policy ${NAME}"
-        firewall-cmd --permanent --policy="${NAME}" --add-ingress-zone="${FROM}" > /dev/null || die "Failed to set ${NAME} ingress zone"
-        firewall-cmd --permanent --policy="${NAME}" --add-egress-zone="${TO}" > /dev/null || die "Failed to set ${NAME} egress zone"
-        CHANGED=true
-    fi
-    if [ "$(firewall-cmd --permanent --policy="${NAME}" --get-priority)" != "-10" ]; then
-        firewall-cmd --permanent --policy="${NAME}" --set-priority=-10 > /dev/null || die "Failed to set ${NAME} priority"
-        CHANGED=true
-    fi
-    if [ "$(firewall-cmd --permanent --policy="${NAME}" --get-target)" != "${TARGET}" ]; then
-        firewall-cmd --permanent --policy="${NAME}" --set-target="${TARGET}" > /dev/null || die "Failed to set ${NAME} target"
-        CHANGED=true
-    fi
-}
-
-# The policy's current rules, read once per policy (one firewall-cmd query per
-# rule makes every ./update take minutes). firewalld lists a rule exactly as it
-# normalises it, so a rule that is not listed verbatim is checked with
-# --query-rich-rule before being added.
-RULES_POLICY=""
-RULES=""
-ensure_rule() {
-    POLICY="$1"
-    RULE="$2"
-    if [ "${RULES_POLICY}" != "${POLICY}" ]; then
-        RULES="$(firewall-cmd --permanent --policy="${POLICY}" --list-rich-rules)"
-        RULES_POLICY="${POLICY}"
-    fi
-    if printf '%s\n' "${RULES}" | grep -Fqx -- "${RULE}"; then
-        return 0
-    fi
-    if ! firewall-cmd --permanent --policy="${POLICY}" --query-rich-rule="${RULE}" > /dev/null 2>&1; then
-        firewall-cmd --permanent --policy="${POLICY}" --add-rich-rule="${RULE}" > /dev/null || die "Failed to add ${POLICY} rule: ${RULE}"
-        CHANGED=true
-    fi
-}
-
-family_of() {
-    case "$1" in
-        *:*) echo ipv6 ;;
-        *) echo ipv4 ;;
-    esac
-}
-
-# allow_to POLICY PROTO PORT DESTINATION...
-allow_to() {
-    POLICY="$1"
-    PROTO="$2"
-    PORT="$3"
-    shift 3
-    for DST in "$@"; do
-        ensure_rule "${POLICY}" "rule family=\"$(family_of "${DST}")\" destination address=\"${DST}\" port protocol=\"${PROTO}\" port=\"${PORT}\" accept"
-    done
-}
-
-# allow_ipsets POLICY PORT SLUG...: tcp to the v4 and v6 sets of each slug.
-allow_ipsets() {
-    POLICY="$1"
-    PORT="$2"
-    shift 2
-    for SLUG in "$@"; do
-        ensure_rule "${POLICY}" "rule family=\"ipv4\" destination ipset=\"gku-egress-${SLUG}-v4\" port protocol=\"tcp\" port=\"${PORT}\" accept"
-        ensure_rule "${POLICY}" "rule family=\"ipv6\" destination ipset=\"gku-egress-${SLUG}-v6\" port protocol=\"tcp\" port=\"${PORT}\" accept"
-    done
-}
-
-catch_all() {
-    POLICY="$1"
-    for FAMILY in ipv4 ipv6; do
-        ensure_rule "${POLICY}" "rule priority=\"32767\" family=\"${FAMILY}\" log prefix=\"${POLICY}-unmatched: \" level=\"info\" limit value=\"30/m\""
-    done
-}
-
-firewall-cmd --state > /dev/null 2>&1 || die "firewalld is not running"
-info "Configuring firewall (policy target ${TARGET})..."
-
-# --- ipsets (entries are maintained by refresh-egress-ipsets) ---
-EXISTING_IPSETS="$(firewall-cmd --permanent --get-ipsets)"
-IPSET_CREATED=false
-for SLUG in ${ALL_SLUGS}; do
-    TYPE="hash:ip"
-    case "${SLUG}" in
-        ghnet | cfnet) TYPE="hash:net" ;;
-    esac
-    for FAM in v4:inet v6:inet6; do
-        NAME="gku-egress-${SLUG}-${FAM%%:*}"
-        if ! printf '%s\n' "${EXISTING_IPSETS}" | tr ' ' '\n' | grep -qx "${NAME}"; then
-            firewall-cmd --permanent --new-ipset="${NAME}" --type="${TYPE}" --option=family="${FAM#*:}" > /dev/null || die "Failed to create ipset ${NAME}"
-            IPSET_CREATED=true
-            CHANGED=true
+# --- Retire the firewalld policies and ipsets an earlier version used. Their
+# refresh reloaded firewalld every 10 minutes, and a firewalld killed
+# mid-reload (for example by the OOM killer) leaves its block-everything table
+# behind. One last reload removes them; after this nothing here reloads
+# firewalld.
+if command -v firewall-cmd > /dev/null 2>&1 && firewall-cmd --state > /dev/null 2>&1; then
+    RETIRED=false
+    for POLICY in gku-egress gku-egress-docker; do
+        if firewall-cmd --permanent --info-policy="${POLICY}" > /dev/null 2>&1; then
+            firewall-cmd --permanent --delete-policy="${POLICY}" > /dev/null || die "Failed to delete policy ${POLICY}"
+            RETIRED=true
         fi
     done
-done
-# A new permanent ipset is not a valid rich-rule destination until firewalld
-# reloads (INVALID_IPSET otherwise).
-if [ "${IPSET_CREATED}" = "true" ]; then
-    firewall-cmd --reload > /dev/null
+    for IPSET in $(firewall-cmd --permanent --get-ipsets); do
+        case "${IPSET}" in
+            gku-egress-*)
+                firewall-cmd --permanent --delete-ipset="${IPSET}" > /dev/null || die "Failed to delete ipset ${IPSET}"
+                RETIRED=true
+                ;;
+        esac
+    done
+    if [ "${RETIRED}" = "true" ]; then
+        info "Removing the old firewalld egress policies..."
+        firewall-cmd --reload > /dev/null
+    fi
 fi
+rm -f /usr/local/bin/gickup-refresh-egress-ipsets
 
-# --- Egress from the host ---
-ensure_policy gku-egress HOST ANY
-# ICMPv6 is fundamental (NDP, PMTU discovery); IGMP and DHCPv6 are link-local
-# housekeeping.
-ensure_rule gku-egress 'rule family="ipv6" protocol value="ipv6-icmp" accept'
-ensure_rule gku-egress 'rule family="ipv4" protocol value="icmp" accept'
-ensure_rule gku-egress 'rule family="ipv4" protocol value="igmp" accept'
-allow_to gku-egress udp 547 ff02::1:2
-# The host talking to its own containers.
-ensure_rule gku-egress 'rule family="ipv4" destination address="172.16.0.0/12" accept'
-ensure_rule gku-egress 'rule family="ipv6" destination address="fd00::/8" accept'
-for PROTO in udp tcp; do
-    # shellcheck disable=SC2086
-    allow_to gku-egress "${PROTO}" 53 ${DNS_V4} ${DNS_V6}
-done
-allow_to gku-egress udp 123 "${NTP_V4}"
-# Proxies: the Docker Hub mirror (this cache, through Traefik), the pacman
-# cache, metrics shipping (monitoring.markridgwell.com).
-# shellcheck disable=SC2086
-allow_to gku-egress tcp 443 ${PROXIES_V4} ${PROXIES_V6}
-# shellcheck disable=SC2086
-allow_to gku-egress tcp 9428 ${LOGS_V4}
-# shellcheck disable=SC2086
-allow_to gku-egress tcp 443 ${FASTLY}
-# shellcheck disable=SC2086
-allow_ipsets gku-egress 443 ${HOST_SLUGS}
-catch_all gku-egress
+info "Configuring firewall (enforce ${ENFORCE})..."
 
-# --- Egress from the containers ---
-ensure_policy gku-egress-docker docker public
-for PROTO in udp tcp; do
-    # shellcheck disable=SC2086
-    allow_to gku-egress-docker "${PROTO}" 53 ${DNS_V4} ${DNS_V6}
-done
-# shellcheck disable=SC2086
-allow_to gku-egress-docker tcp 443 ${PROXIES_V4} ${PROXIES_V6}
-# gickup clones and fetches the GitHub repositories over SSH (the
-# ssh: true source in conf.yml) as well as HTTPS.
-allow_ipsets gku-egress-docker 22 github ghnet
-# shellcheck disable=SC2086
-allow_to gku-egress-docker tcp 443 ${FASTLY}
-# shellcheck disable=SC2086
-allow_ipsets gku-egress-docker 443 ${CONTAINER_SLUGS}
-catch_all gku-egress-docker
-
-finish
-
-# --- ipset refresh timer ---
-install -m 755 "${SCRIPT_DIR}/refresh-egress-ipsets" /usr/local/bin/gickup-refresh-egress-ipsets
+# --- The egress table and its refresh timer ---
+install -m 755 "${SCRIPT_DIR}/egress" /usr/local/bin/gickup-egress
 install -d -m 755 /usr/local/share/credfeto-gickup
 install -m 644 "${SCRIPT_DIR}/github-egress-ranges" /usr/local/share/credfeto-gickup/github-egress-ranges
 install -m 644 "${SCRIPT_DIR}/cloudflare-egress-ranges" /usr/local/share/credfeto-gickup/cloudflare-egress-ranges
@@ -252,6 +96,11 @@ ln -sfn "${SCRIPT_DIR}/sync" /usr/local/sbin/gickup-firewall-sync
 install -m 644 "${SCRIPT_DIR}/gickup-firewall-sync.service" /etc/systemd/system/gickup-firewall-sync.service
 install -m 644 "${SCRIPT_DIR}/gickup-firewall-sync.timer" /etc/systemd/system/gickup-firewall-sync.timer
 
+# The settings firewall/egress reads, written before the timers restart so
+# that no run picks up stale ones. Keep the paths in sync with firewall/egress.
+install -d -m 755 /var/lib/credfeto-gickup
+printf '%s\n' "${ENFORCE}" > /var/lib/credfeto-gickup/egress-enforce
+
 systemctl daemon-reload
 for UNIT in gickup-egress-refresh.timer gickup-firewall-sync.timer; do
     systemctl enable "${UNIT}" > /dev/null 2>&1
@@ -259,12 +108,11 @@ for UNIT in gickup-egress-refresh.timer gickup-firewall-sync.timer; do
     # schedule otherwise.
     systemctl restart "${UNIT}"
 done
-# Populate the ipsets now rather than at the timer's first run.
-/usr/local/bin/gickup-refresh-egress-ipsets
+# Load the table now rather than at the timer's first run.
+/usr/local/bin/gickup-egress
 
 # Record the commit whose firewall config is now live; firewall/sync compares
 # against it. Keep the path in sync with firewall/sync.
-install -d -m 755 /var/lib/credfeto-gickup
 git -C "${SCRIPT_DIR}" rev-parse HEAD > /var/lib/credfeto-gickup/firewall-applied-head
 
-info "Firewall configured (policy target ${TARGET})."
+info "Firewall configured (enforce ${ENFORCE})."

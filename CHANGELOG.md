@@ -21,6 +21,7 @@ Please ADD ALL Changes to the UNRELEASED SECTION and not a specific release
 - Fixed conf.yml comment formatting
 ### Changed
 - Changed watchtower to use WATCHTOWER_SCHEDULE (default 0 24 * * * *, overridable via .env) with WATCHTOWER_CLEANUP enabled, replacing WATCHTOWER_POLL_INTERVAL; added example .env
+- The host egress firewall is now one nftables table (`inet gku_egress`) loaded atomically by `firewall/egress`, instead of firewalld policies and ipsets: the 10-minute refresh reloaded firewalld, and a firewalld killed mid-reload (by the OOM killer) left its block-everything table in place and cut the host off. `firewall/configure` removes the old policies and ipsets with one last reload
 ### Deprecated
 ### Removed
 ### Deployment Changes

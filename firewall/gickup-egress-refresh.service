@@ -1,11 +1,11 @@
 [Unit]
-Description=Refresh the gickup host's dynamic egress firewalld ipsets
+Description=Refresh and load the gickup host's egress nftables table
 Wants=network-online.target
-After=network-online.target firewalld.service
+After=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/bin/gickup-refresh-egress-ipsets
+ExecStart=/usr/local/bin/gickup-egress
 ProtectSystem=full
 ProtectHome=true
 NoNewPrivileges=true
