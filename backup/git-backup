@@ -34,21 +34,17 @@ if [ -n "${GICKUP_BACKUP_ASKPASS_TOKEN_FILE:-}" ]; then
     exit 0
 fi
 
-die() {
-    if [ -t 2 ]; then
-        printf '\n\033[31m✗\033[0m %s\n' "$*" >&2
-    else
-        printf '\n✗ %s\n' "$*" >&2
-    fi
-    exit 1
-}
-
 error() {
     if [ -t 2 ]; then
         printf '\n\033[31m✗\033[0m %s\n' "$*" >&2
     else
         printf '\n✗ %s\n' "$*" >&2
     fi
+}
+
+die() {
+    error "$@"
+    exit 1
 }
 
 info() {
@@ -232,7 +228,7 @@ mirror() {
             return 0
         fi
         info "Cloning $2"
-        mkdir -p "$(dirname "${TARGET}")" || return 1
+        mkdir -p "${TARGET%/*}" || return 1
         set -- clone --bare --quiet -- "$1" "${TARGET}"
     fi
     # The URL carries no credentials and credential.helper is cleared, so the
