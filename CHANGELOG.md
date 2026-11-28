@@ -21,9 +21,9 @@ Please ADD ALL Changes to the UNRELEASED SECTION and not a specific release
 - Fixed conf.yml comment formatting
 - `./update` now re-runs itself after `git pull` so script changes apply on the same run
 ### Changed
-- Replacing gickup with a git clone/fetch backup container published to ghcr.io (in progress)
 - Watchtower uses WATCHTOWER_SCHEDULE (overridable via .env) with cleanup; added example .env
 - Host egress firewall is now one atomically loaded nftables table (`inet gku_egress`)
+- Gickup Docker backup replaced by a host systemd timer running a git clone --bare/fetch script
 ### Deprecated
 ### Removed
 ### Deployment Changes
