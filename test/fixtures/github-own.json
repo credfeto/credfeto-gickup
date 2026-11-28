@@ -1,34 +1,42 @@
 [
   {
     "full_name": "me/own-a",
+    "owner": { "login": "me" },
     "ssh_url": "file://@ORIGIN@/own-a.git",
     "clone_url": "https://example.invalid/me/own-a.git",
-    "stargazers_count": 2,
-    "pushed_at": "@RECENT@",
-    "archived": false
-  },
-  {
-    "full_name": "me/own-unstarred",
-    "ssh_url": "file://@ORIGIN@/own-a.git",
-    "clone_url": "https://example.invalid/me/own-unstarred.git",
     "stargazers_count": 0,
-    "pushed_at": "@RECENT@",
-    "archived": false
-  },
-  {
-    "full_name": "me/own-old",
-    "ssh_url": "file://@ORIGIN@/own-a.git",
-    "clone_url": "https://example.invalid/me/own-old.git",
-    "stargazers_count": 5,
     "pushed_at": "2001-01-01T00:00:00Z",
-    "archived": false
+    "archived": false,
+    "fork": false
   },
   {
     "full_name": "me/own-archived",
-    "ssh_url": "file://@ORIGIN@/own-a.git",
+    "owner": { "login": "me" },
+    "ssh_url": "file://@ORIGIN@/own-archived.git",
     "clone_url": "https://example.invalid/me/own-archived.git",
     "stargazers_count": 3,
     "pushed_at": "@RECENT@",
-    "archived": true
+    "archived": true,
+    "fork": false
+  },
+  {
+    "full_name": "me/own-fork",
+    "owner": { "login": "me" },
+    "ssh_url": "file://@ORIGIN@/own-fork.git",
+    "clone_url": "https://example.invalid/me/own-fork.git",
+    "stargazers_count": 0,
+    "pushed_at": "@RECENT@",
+    "archived": false,
+    "fork": true
+  },
+  {
+    "full_name": "someone/collab",
+    "owner": { "login": "someone" },
+    "ssh_url": "file://@ORIGIN@/own-a.git",
+    "clone_url": "https://example.invalid/someone/collab.git",
+    "stargazers_count": 7,
+    "pushed_at": "@RECENT@",
+    "archived": false,
+    "fork": false
   }
 ]

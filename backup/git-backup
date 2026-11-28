@@ -6,18 +6,19 @@
 # its mirrors are fetched rather than cloned again). Runs from
 # gickup-backup.service; see README.md, "Backup service".
 #
-# Listed and filtered as gickup's conf.yml did:
-#   * the token owner's own and starred GitHub repositories, over SSH, with at
-#     least one star, pushed to within GICKUP_BACKUP_MAX_AGE_DAYS and not
-#     archived;
-#   * the GICKUP_BACKUP_GITHUB_ORG organisation's repositories, over HTTPS,
-#     with the same star and age filters but archived ones included;
-#   * the token owner's own and starred gitlab.com projects, over HTTPS,
-#     unfiltered.
+# Listed:
+#   * every repository of each GitHub owner in GICKUP_BACKUP_GITHUB_OWNERS
+#     (users or organisations), archived and forked ones included, with no
+#     star or age filter. The token owner's repositories are listed through
+#     /user/repos and fetched over SSH; an organisation's through
+#     /orgs/<owner>/repos and another user's (public ones only) through
+#     /users/<owner>/repos, both over HTTPS with the token. An entry whose
+#     owner.login is not the owner it was listed for is dropped;
+#   * the token owner's own gitlab.com projects, over HTTPS, unfiltered.
 #
 # Only branches and tags are fetched. A mirror is never deleted: one that is
-# no longer listed (deleted, renamed, archived or filtered out upstream) is
-# reported and kept as the last good copy.
+# no longer listed upstream (deleted or renamed), or whose GitHub owner is not
+# in GICKUP_BACKUP_GITHUB_OWNERS, is reported and kept as the last good copy.
 #
 # The tokens never reach a command line, the environment or a repository's
 # config: curl reads the Authorization header from stdin, and git asks this
@@ -71,18 +72,26 @@ for ARG in "$@"; do
     esac
 done
 
-MAX_AGE_DAYS="${GICKUP_BACKUP_MAX_AGE_DAYS:-1826}"
-GITHUB_ORG="${GICKUP_BACKUP_GITHUB_ORG:-funfair-tech}"
+OWNERS_SETTING="${GICKUP_BACKUP_GITHUB_OWNERS:-credfeto funfair-tech dnyw4l3n13 steward-warden prpixie}"
 DEST="${GICKUP_BACKUP_DEST:-/data/gickup}"
 GITHUB_API="${GICKUP_BACKUP_GITHUB_API:-https://api.github.com}"
 GITLAB_API="${GICKUP_BACKUP_GITLAB_API:-https://gitlab.com/api/v4}"
 
-case "${MAX_AGE_DAYS}" in
-    '' | *[!0-9]*) die "GICKUP_BACKUP_MAX_AGE_DAYS must be a whole number of days: ${MAX_AGE_DAYS}" ;;
-esac
-case "${GITHUB_ORG}" in
-    '' | *[!A-Za-z0-9_.-]*) die "GICKUP_BACKUP_GITHUB_ORG is not an organisation name: ${GITHUB_ORG}" ;;
-esac
+# GitHub owner names are case-insensitive: kept lower-cased, each once.
+OWNERS=""
+set -f
+for OWNER in ${OWNERS_SETTING}; do
+    case "${OWNER}" in
+        '.' | '..' | *[!A-Za-z0-9_.-]*) die "GICKUP_BACKUP_GITHUB_OWNERS has an entry that is not a GitHub owner name: ${OWNER}" ;;
+    esac
+    OWNER="$(printf '%s' "${OWNER}" | tr '[:upper:]' '[:lower:]')"
+    case " ${OWNERS} " in
+        *" ${OWNER} "*) ;;
+        *) OWNERS="${OWNERS:+${OWNERS} }${OWNER}" ;;
+    esac
+done
+set +f
+[ -n "${OWNERS}" ] || die "GICKUP_BACKUP_GITHUB_OWNERS lists no GitHub owners"
 case "${DEST}" in
     /*) ;;
     *) die "GICKUP_BACKUP_DEST must be an absolute path: ${DEST}" ;;
@@ -121,7 +130,6 @@ GIT_ALLOW_PROTOCOL="${GIT_ALLOW_PROTOCOL:-https:ssh}"
 export GIT_TERMINAL_PROMPT GIT_ALLOW_PROTOCOL
 
 SELF="$(readlink -f "$0")"
-CUTOFF=$(($(date +%s) - MAX_AGE_DAYS * 86400))
 TAB="$(printf '\t')"
 
 WORK="$(mktemp -d)"
@@ -157,17 +165,24 @@ list_paginated() {
         jq -e 'type == "array"' "${WORK}/page.json" > /dev/null 2>&1 ||
             die "Listing did not return a list: ${URL}"
         [ "$(jq 'length' "${WORK}/page.json")" -gt 0 ] || break
-        jq -r --argjson cutoff "${CUTOFF}" "$@" "${FILTER}" "${WORK}/page.json" ||
+        jq -r "$@" "${FILTER}" "${WORK}/page.json" ||
             die "Listing could not be read: ${URL}"
         PAGE=$((PAGE + 1))
     done
 }
 
-# shellcheck disable=SC2016 # $cutoff, $ssh and $archived are jq variables
+# $1 token file, $2 url. Fetches a single object into ${WORK}/object.json;
+# any failure stops the whole run, as for a listing.
+api_object() {
+    api_get "$1" "$2" > "${WORK}/object.json" ||
+        die "Lookup failed: $2"
+    jq -e 'type == "object"' "${WORK}/object.json" > /dev/null 2>&1 ||
+        die "Lookup did not return an object: $2"
+}
+
+# shellcheck disable=SC2016 # $owner and $ssh are jq variables
 GITHUB_FILTER='.[]
-  | select((.stargazers_count // 0) >= 1)
-  | select(((.pushed_at // "1970-01-01T00:00:00Z") | fromdateiso8601) >= $cutoff)
-  | select($archived or ((.archived // false) | not))
+  | select(((.owner.login // "") | ascii_downcase) == $owner)
   | [(if $ssh then .ssh_url else .clone_url end),
      "github.com/" + .full_name + ".git",
      "github"]
@@ -178,19 +193,39 @@ GITLAB_FILTER='.[]
   | @tsv'
 
 info "Listing repositories..."
+api_object "${GITHUB_TOKEN_FILE}" "${GITHUB_API}/user"
+TOKEN_LOGIN="$(jq -r '(.login // "") | ascii_downcase' "${WORK}/object.json")"
+case "${TOKEN_LOGIN}" in
+    '' | *[!a-z0-9_.-]*) die "Could not read the token owner's login from ${GITHUB_API}/user" ;;
+esac
+
+# $1 owner (lower-cased). Lists all of the owner's repositories, choosing the
+# endpoint and the URL kind from who the owner is.
+list_github_owner() {
+    if [ "$1" = "${TOKEN_LOGIN}" ]; then
+        list_paginated "${GITHUB_TOKEN_FILE}" "${GITHUB_API}/user/repos?affiliation=owner" "${GITHUB_FILTER}" \
+            --arg owner "$1" --argjson ssh true
+        return
+    fi
+    api_object "${GITHUB_TOKEN_FILE}" "${GITHUB_API}/users/$1"
+    case "$(jq -r '.type // ""' "${WORK}/object.json")" in
+        Organization) LISTING="${GITHUB_API}/orgs/$1/repos?type=all" ;;
+        User) LISTING="${GITHUB_API}/users/$1/repos?type=owner" ;;
+        *) die "GitHub owner $1 is neither a user nor an organisation" ;;
+    esac
+    list_paginated "${GITHUB_TOKEN_FILE}" "${LISTING}" "${GITHUB_FILTER}" \
+        --arg owner "$1" --argjson ssh false
+}
+
 {
-    list_paginated "${GITHUB_TOKEN_FILE}" "${GITHUB_API}/user/repos?affiliation=owner" "${GITHUB_FILTER}" \
-        --argjson ssh true --argjson archived false
-    list_paginated "${GITHUB_TOKEN_FILE}" "${GITHUB_API}/user/starred?sort=created" "${GITHUB_FILTER}" \
-        --argjson ssh true --argjson archived false
-    list_paginated "${GITHUB_TOKEN_FILE}" "${GITHUB_API}/orgs/${GITHUB_ORG}/repos?type=all" "${GITHUB_FILTER}" \
-        --argjson ssh false --argjson archived true
+    for OWNER in ${OWNERS}; do
+        list_github_owner "${OWNER}"
+    done
     list_paginated "${GITLAB_TOKEN_FILE}" "${GITLAB_API}/projects?owned=true&simple=true" "${GITLAB_FILTER}"
-    list_paginated "${GITLAB_TOKEN_FILE}" "${GITLAB_API}/projects?starred=true&simple=true" "${GITLAB_FILTER}"
 } > "${WORK}/listed.tsv"
 
-# A repository listed twice (an own repository that is also starred) is
-# mirrored once, through the first listing that names it.
+# A repository listed twice is mirrored once, through the first listing that
+# names it.
 awk -F '\t' '!seen[$2]++' "${WORK}/listed.tsv" > "${WORK}/repos.tsv"
 cut -f 2 "${WORK}/repos.tsv" | LC_ALL=C sort > "${WORK}/listed-paths.txt"
 
@@ -256,14 +291,27 @@ done < "${WORK}/repos.tsv"
 
 [ "${STOP}" = "false" ] || die "Stopped after ${TOTAL} repositories, before the backup finished"
 
-# Mirrors that are no longer listed are reported and kept, never removed.
+# Mirrors that are not listed are reported and kept, never removed: those of
+# a GitHub owner outside GICKUP_BACKUP_GITHUB_OWNERS apart from the rest.
 if [ -d "${DEST}" ]; then
     find "${DEST}" -mindepth 2 -type d -name '*.git' -prune -print |
         cut -c "$((${#DEST} + 2))-" | LC_ALL=C sort > "${WORK}/disk-paths.txt"
-    LC_ALL=C comm -23 "${WORK}/disk-paths.txt" "${WORK}/listed-paths.txt" > "${WORK}/stale.txt"
+    LC_ALL=C comm -23 "${WORK}/disk-paths.txt" "${WORK}/listed-paths.txt" |
+        awk -F / -v owners="${OWNERS}" -v gone="${WORK}/stale.txt" -v other="${WORK}/other-owners.txt" '
+            BEGIN {
+                n = split(owners, list, " ")
+                for (i = 1; i <= n; i++) allowed[list[i]] = 1
+                printf "" > gone
+                printf "" > other
+            }
+            $1 == "github.com" && !(tolower($2) in allowed) { print > other; next }
+            { print > gone }'
     while IFS= read -r STALE; do
         info "Not listed upstream, kept: ${STALE}"
     done < "${WORK}/stale.txt"
+    while IFS= read -r STALE; do
+        info "Not in GICKUP_BACKUP_GITHUB_OWNERS, kept: ${STALE}"
+    done < "${WORK}/other-owners.txt"
 fi
 
 [ "${FAILURES}" -eq 0 ] || die "${FAILURES} of ${TOTAL} repositories failed to back up"

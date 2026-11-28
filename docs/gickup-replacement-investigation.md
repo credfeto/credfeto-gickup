@@ -2,7 +2,7 @@
 
 This document records whether the nightly gickup backup can be replaced by a small shell script that lists repositories through the provider REST APIs with a personal access token (PAT) and then runs plain `git clone` / `git fetch` on bare repositories.
 
-> **Implemented** as `backup/git-backup`, run by a systemd timer on the host (the first option in [Scheduling and runtime](#6-scheduling-and-runtime)); gickup, Watchtower, `docker-compose.yml` and `conf.yml` are gone. The layout on the host was confirmed as `<site>/<owner>/<repo>.git` under `/data/gickup`. Unlike the sketch below, the token owner's own and starred GitHub repositories are still fetched over SSH, as gickup did. See README.md, "Backup service". The rest of this document is the investigation as written.
+> **Implemented** as `backup/git-backup`, run by a systemd timer on the host (the first option in [Scheduling and runtime](#6-scheduling-and-runtime)); gickup, Watchtower, `docker-compose.yml` and `conf.yml` are gone. The layout on the host was confirmed as `<site>/<owner>/<repo>.git` under `/data/gickup`. Unlike the sketch below, the token owner's own GitHub repositories are still fetched over SSH, as gickup did. Since then (#19), starred repositories (GitHub and gitlab.com) and the star and age filters were dropped: GitHub backup is every repository of the owners in `GICKUP_BACKUP_GITHUB_OWNERS`. See README.md, "Backup service". The rest of this document is the investigation as written.
 
 ## Recommendation
 

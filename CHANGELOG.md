@@ -24,6 +24,7 @@ Please ADD ALL Changes to the UNRELEASED SECTION and not a specific release
 - Watchtower uses WATCHTOWER_SCHEDULE (overridable via .env) with cleanup; added example .env
 - Host egress firewall is now one atomically loaded nftables table (`inet gku_egress`)
 - Gickup Docker backup replaced by a host systemd timer running a git clone --bare/fetch script
+- GitHub backup limited to GICKUP_BACKUP_GITHUB_OWNERS; starred repos and star/age filters removed
 ### Deprecated
 ### Removed
 ### Deployment Changes
