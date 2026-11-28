@@ -1,0 +1,22 @@
+[
+  {
+    "full_name": "other/other-d",
+    "owner": { "login": "other" },
+    "ssh_url": "file://@ORIGIN@/missing.git",
+    "clone_url": "file://@ORIGIN@/other-d.git",
+    "stargazers_count": 0,
+    "pushed_at": "@RECENT@",
+    "archived": false,
+    "fork": true
+  },
+  {
+    "full_name": "intruder/planted",
+    "owner": { "login": "intruder" },
+    "ssh_url": "file://@ORIGIN@/missing.git",
+    "clone_url": "file://@ORIGIN@/other-d.git",
+    "stargazers_count": 5,
+    "pushed_at": "@RECENT@",
+    "archived": false,
+    "fork": false
+  }
+]

@@ -4,11 +4,10 @@
 
 `update` installs `backup/git-backup` as a systemd service, `gickup-backup.service`, run nightly at 03:27 (Europe/London) by `gickup-backup.timer`. A run missed while the host was off happens at the next boot. It mirrors, as bare repositories laid out as `<site>/<owner>/<repo>.git` under `/data/gickup`:
 
-- the token owner's own and starred GitHub repositories, over SSH, with at least one star, pushed to within the last five years and not archived;
-- the `funfair-tech` organisation's repositories, over HTTPS, with the same star and age filters, archived ones included;
-- the token owner's own and starred gitlab.com projects, over HTTPS, unfiltered.
+- every repository of each GitHub owner (user or organisation) in `GICKUP_BACKUP_GITHUB_OWNERS`, archived and forked ones included, with no star or age filter: the token owner's own repositories over SSH, an organisation's over HTTPS, and another user's public repositories over HTTPS. Repositories of any other GitHub owner, starred ones included, are not backed up;
+- the token owner's own gitlab.com projects, over HTTPS, unfiltered.
 
-Only branches and tags are fetched. A mirror is never deleted: one that is no longer listed upstream (deleted, renamed, archived or filtered out) is kept and reported as `Not listed upstream, kept: <path>` at the end of the run. One repository failing does not stop the others; the run fails at the end with the count.
+Only branches and tags are fetched. A mirror is never deleted: one that is no longer listed upstream (deleted or renamed) is kept and reported as `Not listed upstream, kept: <path>` at the end of the run, and one whose GitHub owner is not in `GICKUP_BACKUP_GITHUB_OWNERS` as `Not in GICKUP_BACKUP_GITHUB_OWNERS, kept: <path>`. One repository failing does not stop the others; the run fails at the end with the count.
 
 The service runs as the `gickup-backup` system user, which `update` creates and hands the mirrors to. The host needs `git`, `openssh`, `curl` and `jq`.
 
@@ -18,9 +17,9 @@ These files in the checkout are git-ignored, and the service reads them through 
 
 | File                | Used for                                                                                             |
 |---------------------|------------------------------------------------------------------------------------------------------|
-| `auth/github.token` | GitHub personal access token: the API listing, and HTTPS fetches of the organisation's repositories  |
+| `auth/github.token` | GitHub personal access token: the API listing, and HTTPS fetches of the other owners' repositories   |
 | `auth/gitlab.token` | gitlab.com personal access token (`read_api` and `read_repository`)                                  |
-| `ssh/id_github`     | SSH key for fetching the token owner's own and starred GitHub repositories                           |
+| `ssh/id_github`     | SSH key for fetching the token owner's own GitHub repositories                                       |
 | `ssh/known_hosts`   | Optional: GitHub's host keys. Without it, the key seen on the first connection is pinned             |
 
 The tokens never reach a command line, the environment or a mirror's config.
@@ -29,11 +28,10 @@ The tokens never reach a command line, the environment or a mirror's config.
 
 Set in `.env` in the checkout's root:
 
-| Variable                     | Default        | Meaning                                                  |
-|------------------------------|----------------|----------------------------------------------------------|
-| `GICKUP_BACKUP_DEST`         | `/data/gickup` | Where the mirrors live; run `./update` after changing it |
-| `GICKUP_BACKUP_MAX_AGE_DAYS` | `1826`         | GitHub repositories not pushed to for longer are skipped |
-| `GICKUP_BACKUP_GITHUB_ORG`   | `funfair-tech` | The GitHub organisation to mirror                        |
+| Variable                      | Default                                                   | Meaning                                                                        |
+|-------------------------------|-----------------------------------------------------------|--------------------------------------------------------------------------------|
+| `GICKUP_BACKUP_DEST`          | `/data/gickup`                                            | Where the mirrors live; run `./update` after changing it                       |
+| `GICKUP_BACKUP_GITHUB_OWNERS` | `credfeto funfair-tech dnyw4l3n13 steward-warden prpixie` | Space-separated GitHub users and organisations whose repositories are mirrored |
 
 ### Running it
 

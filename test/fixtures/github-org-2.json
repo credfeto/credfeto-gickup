@@ -1,0 +1,12 @@
+[
+  {
+    "full_name": "org/org-archived",
+    "owner": { "login": "org" },
+    "ssh_url": "file://@ORIGIN@/missing.git",
+    "clone_url": "file://@ORIGIN@/org-archived.git",
+    "stargazers_count": 1,
+    "pushed_at": "@RECENT@",
+    "archived": true,
+    "fork": false
+  }
+]

@@ -23,8 +23,8 @@ setup() {
     export GICKUP_BACKUP_DEST="${BATS_TEST_TMPDIR}/dest"
     export GICKUP_BACKUP_GITHUB_API="${GITHUB_API}"
     export GICKUP_BACKUP_GITLAB_API="${GITLAB_API}"
-    export GICKUP_BACKUP_GITHUB_ORG=org
-    unset GICKUP_BACKUP_DRY_RUN GICKUP_BACKUP_MAX_AGE_DAYS STATE_DIRECTORY GICKUP_BACKUP_ASKPASS_TOKEN_FILE
+    export GICKUP_BACKUP_GITHUB_OWNERS="me org other"
+    unset GICKUP_BACKUP_DRY_RUN STATE_DIRECTORY GICKUP_BACKUP_ASKPASS_TOKEN_FILE
 
     export FAKE_CURL_LOG_DIR="${BATS_TEST_TMPDIR}/curl-log"
     export FAKE_CURL_ROUTES="${BATS_TEST_TMPDIR}/routes"
@@ -37,17 +37,19 @@ setup() {
     printf '%s\n' "${GITLAB_TOKEN}" > "${CREDENTIALS_DIRECTORY}/gitlab-token"
     printf 'not a real key\n' > "${CREDENTIALS_DIRECTORY}/id_github"
 
-    for NAME in own-a star-b org-c org-archived gl-proj gl-star1 gl-star2; do
+    for NAME in own-a own-archived own-fork org-c org-archived other-d gl-proj; do
         make_origin "${NAME}"
     done
 
     write_routes \
+        "${GITHUB_API}/user" github-user.json \
+        "${GITHUB_API}/users/org" github-users-org.json \
+        "${GITHUB_API}/users/other" github-users-other.json \
         "${GITHUB_API}/user/repos?affiliation=owner&per_page=100&page=1" github-own.json \
-        "${GITHUB_API}/user/starred?sort=created&per_page=100&page=1" github-starred.json \
-        "${GITHUB_API}/orgs/org/repos?type=all&per_page=100&page=1" github-org.json \
-        "${GITLAB_API}/projects?owned=true&simple=true&per_page=100&page=1" gitlab-owned.json \
-        "${GITLAB_API}/projects?starred=true&simple=true&per_page=100&page=1" gitlab-starred-1.json \
-        "${GITLAB_API}/projects?starred=true&simple=true&per_page=100&page=2" gitlab-starred-2.json
+        "${GITHUB_API}/orgs/org/repos?type=all&per_page=100&page=1" github-org-1.json \
+        "${GITHUB_API}/orgs/org/repos?type=all&per_page=100&page=2" github-org-2.json \
+        "${GITHUB_API}/users/other/repos?type=owner&per_page=100&page=1" github-other.json \
+        "${GITLAB_API}/projects?owned=true&simple=true&per_page=100&page=1" gitlab-owned.json
 }
 
 # Pairs of URL and fixture name.
@@ -90,59 +92,117 @@ mirror_head() {
     run "${SCRIPT}"
     [ "${status}" -eq 0 ]
     [[ "${output}" == *"Backup complete: 7 repositories"* ]]
-    for MIRROR in github.com/me/own-a.git github.com/other/star-b.git github.com/org/org-c.git \
-        github.com/org/org-archived.git gitlab.com/me/group/sub-proj.git \
-        gitlab.com/someone/gl-star1.git gitlab.com/someone/gl-star2.git; do
+    for MIRROR in github.com/me/own-a.git github.com/me/own-archived.git github.com/me/own-fork.git \
+        github.com/org/org-c.git github.com/org/org-archived.git github.com/other/other-d.git \
+        gitlab.com/me/group/sub-proj.git; do
         [ "$(git -C "${GICKUP_BACKUP_DEST}/${MIRROR}" rev-parse --is-bare-repository)" = "true" ]
     done
     [ "$(mirror_head github.com/me/own-a.git)" = "$(git -C "${FAKE_ORIGIN_DIR}/own-a.git" rev-parse refs/heads/main)" ]
     git -C "${GICKUP_BACKUP_DEST}/github.com/me/own-a.git" rev-parse --verify --quiet refs/tags/v-own-a
 }
 
-@test "skips own and starred GitHub repositories that are unstarred, old or archived" {
-    run "${SCRIPT}"
-    [ "${status}" -eq 0 ]
-    [ ! -e "${GICKUP_BACKUP_DEST}/github.com/me/own-unstarred.git" ]
-    [ ! -e "${GICKUP_BACKUP_DEST}/github.com/me/own-old.git" ]
-    [ ! -e "${GICKUP_BACKUP_DEST}/github.com/me/own-archived.git" ]
+remote_url() {
+    git -C "${GICKUP_BACKUP_DEST}/$1" config remote.origin.url
 }
 
-@test "keeps archived organisation repositories but still applies the star and age filters" {
+@test "the token owner's repositories are listed through /user/repos and fetched over SSH" {
     run "${SCRIPT}"
     [ "${status}" -eq 0 ]
-    [ -d "${GICKUP_BACKUP_DEST}/github.com/org/org-archived.git" ]
-    [ ! -e "${GICKUP_BACKUP_DEST}/github.com/org/org-unstarred.git" ]
-    [ ! -e "${GICKUP_BACKUP_DEST}/github.com/org/org-old.git" ]
+    grep -qxF "${GITHUB_API}/user/repos?affiliation=owner&per_page=100&page=1" "${FAKE_CURL_LOG_DIR}/urls"
+    run ! grep -qF "${GITHUB_API}/users/me" "${FAKE_CURL_LOG_DIR}/urls"
+    [ "$(remote_url github.com/me/own-a.git)" = "file://${FAKE_ORIGIN_DIR}/own-a.git" ]
+    [ "$(remote_url github.com/me/own-fork.git)" = "file://${FAKE_ORIGIN_DIR}/own-fork.git" ]
 }
 
-@test "the age filter follows GICKUP_BACKUP_MAX_AGE_DAYS" {
-    export GICKUP_BACKUP_MAX_AGE_DAYS=100000
+@test "the token owner is matched whatever the case of the setting" {
+    GICKUP_BACKUP_GITHUB_OWNERS="ME" run "${SCRIPT}"
+    [ "${status}" -eq 0 ]
+    [ "$(remote_url github.com/me/own-a.git)" = "file://${FAKE_ORIGIN_DIR}/own-a.git" ]
+    run ! grep -qF "${GITHUB_API}/users/" "${FAKE_CURL_LOG_DIR}/urls"
+}
+
+@test "an organisation's repositories are listed through /orgs and fetched over HTTPS" {
     run "${SCRIPT}"
     [ "${status}" -eq 0 ]
-    [ -d "${GICKUP_BACKUP_DEST}/github.com/me/own-old.git" ]
+    grep -qxF "${GITHUB_API}/users/org" "${FAKE_CURL_LOG_DIR}/urls"
+    grep -qxF "${GITHUB_API}/orgs/org/repos?type=all&per_page=100&page=1" "${FAKE_CURL_LOG_DIR}/urls"
+    [ "$(remote_url github.com/org/org-c.git)" = "file://${FAKE_ORIGIN_DIR}/org-c.git" ]
 }
 
-@test "uses the SSH URL for own and starred repositories and the HTTPS URL for the organisation" {
+@test "another user's repositories are listed through /users and fetched over HTTPS" {
     run "${SCRIPT}"
     [ "${status}" -eq 0 ]
-    [ "$(git -C "${GICKUP_BACKUP_DEST}/github.com/other/star-b.git" config remote.origin.url)" = "file://${FAKE_ORIGIN_DIR}/star-b.git" ]
-    [ "$(git -C "${GICKUP_BACKUP_DEST}/github.com/org/org-c.git" config remote.origin.url)" = "file://${FAKE_ORIGIN_DIR}/org-c.git" ]
+    grep -qxF "${GITHUB_API}/users/other/repos?type=owner&per_page=100&page=1" "${FAKE_CURL_LOG_DIR}/urls"
+    [ "$(remote_url github.com/other/other-d.git)" = "file://${FAKE_ORIGIN_DIR}/other-d.git" ]
 }
 
-@test "a repository listed twice is mirrored once, from the first listing" {
+@test "an entry owned by someone other than the owner it was listed for is dropped" {
     run "${SCRIPT}"
+    [ "${status}" -eq 0 ]
+    [ ! -e "${GICKUP_BACKUP_DEST}/github.com/someone" ]
+    [ ! -e "${GICKUP_BACKUP_DEST}/github.com/intruder" ]
+    [[ "${output}" != *"someone/collab"* ]]
+    [[ "${output}" != *"intruder/planted"* ]]
+}
+
+@test "archived and forked repositories are included, with no star or age filter" {
+    run "${SCRIPT}"
+    [ "${status}" -eq 0 ]
+    # own-a and org-c have no stars and were last pushed to in 2001.
+    for MIRROR in github.com/me/own-a.git github.com/me/own-archived.git github.com/me/own-fork.git \
+        github.com/org/org-c.git github.com/org/org-archived.git github.com/other/other-d.git; do
+        [ -d "${GICKUP_BACKUP_DEST}/${MIRROR}" ]
+    done
+}
+
+@test "the default owners are used when GICKUP_BACKUP_GITHUB_OWNERS is unset" {
+    unset GICKUP_BACKUP_GITHUB_OWNERS
+    export FAKE_FIXTURES_DIR="${BATS_TEST_TMPDIR}/fixtures"
+    cp -R "${BATS_TEST_DIRNAME}/fixtures" "${FAKE_FIXTURES_DIR}"
+    printf '{"login": "credfeto", "type": "User"}\n' > "${FAKE_FIXTURES_DIR}/token-owner.json"
+    printf '{"type": "Organization"}\n' > "${FAKE_FIXTURES_DIR}/organisation.json"
+    printf '{"type": "User"}\n' > "${FAKE_FIXTURES_DIR}/user.json"
+    write_routes \
+        "${GITHUB_API}/user" token-owner.json \
+        "${GITHUB_API}/users/funfair-tech" organisation.json \
+        "${GITHUB_API}/users/dnyw4l3n13" user.json \
+        "${GITHUB_API}/users/steward-warden" user.json \
+        "${GITHUB_API}/users/prpixie" user.json \
+        "${GITLAB_API}/projects?owned=true&simple=true&per_page=100&page=1" gitlab-owned.json
+    run "${SCRIPT}"
+    [ "${status}" -eq 0 ]
+    for URL in "user/repos?affiliation=owner" "orgs/funfair-tech/repos?type=all" \
+        "users/dnyw4l3n13/repos?type=owner" "users/steward-warden/repos?type=owner" \
+        "users/prpixie/repos?type=owner"; do
+        grep -qxF "${GITHUB_API}/${URL}&per_page=100&page=1" "${FAKE_CURL_LOG_DIR}/urls"
+    done
+    run ! grep -qF "${GITHUB_API}/users/credfeto" "${FAKE_CURL_LOG_DIR}/urls"
+    [ "$(grep -c "${GITHUB_API}/.*repos" "${FAKE_CURL_LOG_DIR}/urls")" -eq 5 ]
+}
+
+@test "an owner named twice is listed and mirrored once" {
+    GICKUP_BACKUP_GITHUB_OWNERS="me org ME other org" run "${SCRIPT}"
     [ "${status}" -eq 0 ]
     [ "$(grep -c 'Cloning github.com/me/own-a.git' <<< "${output}")" -eq 1 ]
-    [ "$(git -C "${GICKUP_BACKUP_DEST}/github.com/me/own-a.git" config remote.origin.url)" = "file://${FAKE_ORIGIN_DIR}/own-a.git" ]
+    [ "$(grep -cxF "${GITHUB_API}/user/repos?affiliation=owner&per_page=100&page=1" "${FAKE_CURL_LOG_DIR}/urls")" -eq 1 ]
+    [ "$(grep -cxF "${GITHUB_API}/users/org" "${FAKE_CURL_LOG_DIR}/urls")" -eq 1 ]
+    [[ "${output}" == *"Backup complete: 7 repositories"* ]]
+}
+
+@test "only the listed GitHub owners are mirrored, and GitLab projects still are" {
+    GICKUP_BACKUP_GITHUB_OWNERS="org" run "${SCRIPT}"
+    [ "${status}" -eq 0 ]
+    [ -d "${GICKUP_BACKUP_DEST}/gitlab.com/me/group/sub-proj.git" ]
+    [ ! -e "${GICKUP_BACKUP_DEST}/github.com/me" ]
+    [[ "${output}" == *"Backup complete: 3 repositories"* ]]
 }
 
 @test "pages through a listing until an empty page" {
     run "${SCRIPT}"
     [ "${status}" -eq 0 ]
-    grep -qxF "${GITLAB_API}/projects?starred=true&simple=true&per_page=100&page=3" "${FAKE_CURL_LOG_DIR}/urls"
-    [ -s "${FAKE_CURL_LOG_DIR}/urls" ]
+    grep -qxF "${GITHUB_API}/orgs/org/repos?type=all&per_page=100&page=3" "${FAKE_CURL_LOG_DIR}/urls"
     run ! grep -qF "page=4" "${FAKE_CURL_LOG_DIR}/urls"
-    [ -d "${GICKUP_BACKUP_DEST}/gitlab.com/someone/gl-star2.git" ]
+    [ -d "${GICKUP_BACKUP_DEST}/github.com/org/org-archived.git" ]
 }
 
 @test "a second run fetches new commits and tags into the existing mirrors" {
@@ -161,13 +221,30 @@ mirror_head() {
 }
 
 @test "reports a mirror that is no longer listed and keeps it" {
-    mkdir -p "${GICKUP_BACKUP_DEST}/github.com/me"
-    git init --quiet --bare "${GICKUP_BACKUP_DEST}/github.com/me/gone.git"
+    for MIRROR in github.com/me/gone.git github.com/Org/renamed.git gitlab.com/me/gone.git; do
+        git init --quiet --bare "${GICKUP_BACKUP_DEST}/${MIRROR}"
+    done
     run "${SCRIPT}"
     [ "${status}" -eq 0 ]
     [[ "${output}" == *"Not listed upstream, kept: github.com/me/gone.git"* ]]
-    [ "$(grep -c 'Not listed upstream' <<< "${output}")" -eq 1 ]
+    [[ "${output}" == *"Not listed upstream, kept: github.com/Org/renamed.git"* ]]
+    [[ "${output}" == *"Not listed upstream, kept: gitlab.com/me/gone.git"* ]]
+    [ "$(grep -c 'Not listed upstream' <<< "${output}")" -eq 3 ]
+    [[ "${output}" != *"Not in GICKUP_BACKUP_GITHUB_OWNERS"* ]]
     [ -d "${GICKUP_BACKUP_DEST}/github.com/me/gone.git" ]
+}
+
+@test "reports a mirror of an owner outside the owner list separately and keeps it" {
+    for MIRROR in github.com/FFmpeg/FFmpeg.git github.com/me/gone.git; do
+        git init --quiet --bare "${GICKUP_BACKUP_DEST}/${MIRROR}"
+    done
+    run "${SCRIPT}"
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"Not in GICKUP_BACKUP_GITHUB_OWNERS, kept: github.com/FFmpeg/FFmpeg.git"* ]]
+    [ "$(grep -c 'Not in GICKUP_BACKUP_GITHUB_OWNERS' <<< "${output}")" -eq 1 ]
+    [[ "${output}" == *"Not listed upstream, kept: github.com/me/gone.git"* ]]
+    [ "$(grep -c 'Not listed upstream' <<< "${output}")" -eq 1 ]
+    [ "$(git -C "${GICKUP_BACKUP_DEST}/github.com/FFmpeg/FFmpeg.git" rev-parse --is-bare-repository)" = "true" ]
 }
 
 @test "a dry run reports what it would do and writes nothing" {
@@ -214,11 +291,40 @@ mirror_head() {
 }
 
 @test "a failed listing stops the run before any repository is touched" {
-    reroute "${GITLAB_API}/projects?starred=true&simple=true&per_page=100&page=2" FAIL
+    reroute "${GITHUB_API}/orgs/org/repos?type=all&per_page=100&page=2" FAIL
     run "${SCRIPT}"
     [ "${status}" -ne 0 ]
-    [[ "${output}" == *"Listing failed: ${GITLAB_API}/projects?starred=true&simple=true"* ]]
+    [[ "${output}" == *"Listing failed: ${GITHUB_API}/orgs/org/repos?type=all"* ]]
     [ ! -e "${GICKUP_BACKUP_DEST}" ]
+}
+
+@test "a failed owner lookup stops the run before any repository is touched" {
+    reroute "${GITHUB_API}/users/other" FAIL
+    run "${SCRIPT}"
+    [ "${status}" -ne 0 ]
+    [[ "${output}" == *"Lookup failed: ${GITHUB_API}/users/other"* ]]
+    [ ! -e "${GICKUP_BACKUP_DEST}" ]
+}
+
+@test "an owner that is neither a user nor an organisation stops the run" {
+    reroute "${GITHUB_API}/users/other" not-a-list.json
+    run "${SCRIPT}"
+    [ "${status}" -ne 0 ]
+    [[ "${output}" == *"GitHub owner other is neither a user nor an organisation"* ]]
+    [ ! -e "${GICKUP_BACKUP_DEST}" ]
+}
+
+@test "a token owner lookup without a login stops the run" {
+    reroute "${GITHUB_API}/user" not-a-list.json
+    run "${SCRIPT}"
+    [ "${status}" -ne 0 ]
+    [[ "${output}" == *"Could not read the token owner's login"* ]]
+    [ ! -e "${GICKUP_BACKUP_DEST}" ]
+
+    reroute "${GITHUB_API}/user" github-own.json
+    run "${SCRIPT}"
+    [ "${status}" -ne 0 ]
+    [[ "${output}" == *"Lookup did not return an object: ${GITHUB_API}/user"* ]]
 }
 
 @test "a listing that is not a list stops the run" {
@@ -230,12 +336,12 @@ mirror_head() {
 }
 
 @test "a repository that fails does not stop the others, and the run fails with the count" {
-    rm -rf "${FAKE_ORIGIN_DIR}/star-b.git"
+    rm -rf "${FAKE_ORIGIN_DIR}/other-d.git"
     run "${SCRIPT}"
     [ "${status}" -ne 0 ]
-    [[ "${output}" == *"Failed to back up github.com/other/star-b.git"* ]]
+    [[ "${output}" == *"Failed to back up github.com/other/other-d.git"* ]]
     [[ "${output}" == *"1 of 7 repositories failed to back up"* ]]
-    [ -d "${GICKUP_BACKUP_DEST}/gitlab.com/someone/gl-star2.git" ]
+    [ -d "${GICKUP_BACKUP_DEST}/gitlab.com/me/group/sub-proj.git" ]
 }
 
 @test "a listed path that could reach outside the destination is skipped" {
@@ -268,14 +374,19 @@ mirror_head() {
     [ ! -e "${FAKE_CURL_LOG_DIR}/argv" ]
 }
 
-@test "invalid settings are refused" {
-    GICKUP_BACKUP_MAX_AGE_DAYS=five run "${SCRIPT}"
+@test "an invalid owner name is refused before anything is listed" {
+    for OWNERS in "me org/../x" "me .." "me *" "me o%2fx"; do
+        GICKUP_BACKUP_GITHUB_OWNERS="${OWNERS}" run "${SCRIPT}"
+        [ "${status}" -ne 0 ]
+        [[ "${output}" == *"GICKUP_BACKUP_GITHUB_OWNERS has an entry that is not a GitHub owner name: ${OWNERS#me }"* ]]
+    done
+    GICKUP_BACKUP_GITHUB_OWNERS="  " run "${SCRIPT}"
     [ "${status}" -ne 0 ]
-    [[ "${output}" == *"GICKUP_BACKUP_MAX_AGE_DAYS must be a whole number"* ]]
+    [[ "${output}" == *"GICKUP_BACKUP_GITHUB_OWNERS lists no GitHub owners"* ]]
+    [ ! -e "${FAKE_CURL_LOG_DIR}/argv" ]
+}
 
-    GICKUP_BACKUP_GITHUB_ORG='org/../x' run "${SCRIPT}"
-    [ "${status}" -ne 0 ]
-    [[ "${output}" == *"GICKUP_BACKUP_GITHUB_ORG is not an organisation name"* ]]
+@test "invalid settings are refused" {
 
     GICKUP_BACKUP_DEST=relative/dest run "${SCRIPT}"
     [ "${status}" -ne 0 ]
@@ -367,12 +478,15 @@ EOF
 }
 
 @test "a stop request finishes the current repository and skips the rest" {
+    # SIGTERM rather than systemd's SIGINT: under bats --jobs each test runs as
+    # a background job, which starts with SIGINT ignored, and a shell cannot
+    # trap a signal ignored on entry. The script traps both the same way.
     # shellcheck disable=SC2016 # expanded by the fake git, not here
-    use_fake_git 'kill -INT "${PPID}"'
+    use_fake_git 'kill -TERM "${PPID}"'
     run "${SCRIPT}"
     [ "${status}" -ne 0 ]
     [[ "${output}" == *"Stopped after 1 repositories, before the backup finished"* ]]
     [ "$(grep -c '^argv=' "${FAKE_GIT_LOG}")" -eq 1 ]
     [ -d "${GICKUP_BACKUP_DEST}/github.com/me/own-a.git" ]
-    [ ! -e "${GICKUP_BACKUP_DEST}/github.com/other/star-b.git" ]
+    [ ! -e "${GICKUP_BACKUP_DEST}/github.com/me/own-archived.git" ]
 }
