@@ -4,19 +4,19 @@
 # ../update as root.
 #
 # The rules are one nftables table, inet gku_egress, built and loaded by
-# firewall/egress (see there): host_out for what the host itself may connect
-# to, docker_fwd for what the containers (gickup and Watchtower) may connect
-# to. The whole table, address sets included, is replaced in one nft
-# transaction, so a refresh never reloads firewalld and a failed load keeps
-# the previous rules. firewalld still owns the base zones; ingress needs
-# nothing extra (the containers publish no ports, and SSH is the public
-# zone's own rule set, managed by the host's base configuration).
+# firewall/egress (see there): host_out for what the host itself, including
+# the gickup-backup service, may connect to. The whole table, address sets
+# included, is replaced in one nft transaction, so a refresh never reloads
+# firewalld and a failed load keeps the previous rules. firewalld still owns
+# the base zones; ingress needs nothing extra (nothing here listens, and SSH
+# is the public zone's own rule set, managed by the host's base
+# configuration).
 #
 # GICKUP_FIREWALL_ENFORCE=true in ../.env is the single enforcement knob:
 # unmatched new connections are dropped. Otherwise (the default) they still
-# flow and are only logged, with the prefixes "gku-egress-unmatched: " and
-# "gku-egress-docker-unmatched: ". The same rules serve both modes: run in
-# observation mode, check the log for anything legitimate, then enforce.
+# flow and are only logged, with the prefix "gku-egress-unmatched: ". The
+# same rules serve both modes: run in observation mode, check the log for
+# anything legitimate, then enforce.
 
 set -eu
 

@@ -1,0 +1,30 @@
+#!/bin/sh
+
+# Stands in for curl in git-backup.bats. Reads its config from stdin as the
+# real script passes it, records the command line and the config, and answers
+# with the fixture the routes file maps the URL to: an unmapped URL is an
+# empty page, and the fixture FAIL is a failed request.
+
+set -eu
+
+printf '%s\n' "$*" >> "${FAKE_CURL_LOG_DIR}/argv"
+CONFIG="$(cat)"
+printf '%s\n' "${CONFIG}" >> "${FAKE_CURL_LOG_DIR}/config"
+URL="$(printf '%s\n' "${CONFIG}" | sed -n 's/^url = "\(.*\)"$/\1/p')"
+printf '%s\n' "${URL}" >> "${FAKE_CURL_LOG_DIR}/urls"
+
+FIXTURE="$(awk -F '\t' -v url="${URL}" '$1 == url { print $2 }' "${FAKE_CURL_ROUTES}")"
+case "${FIXTURE}" in
+    '')
+        printf '[]\n'
+        ;;
+    FAIL)
+        printf 'curl: (22) The requested URL returned error: 500\n' >&2
+        exit 22
+        ;;
+    *)
+        sed -e "s|@ORIGIN@|${FAKE_ORIGIN_DIR}|g" \
+            -e "s|@RECENT@|$(date -u +%Y-%m-%dT%H:%M:%SZ)|g" \
+            "${FAKE_FIXTURES_DIR}/${FIXTURE}"
+        ;;
+esac

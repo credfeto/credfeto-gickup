@@ -1,0 +1,50 @@
+[Unit]
+Description=Mirror the GitHub and gitlab.com repositories into @DEST@
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=gickup-backup
+Group=gickup-backup
+ExecStart=/usr/local/bin/gickup-git-backup
+EnvironmentFile=-@CHECKOUT@/.env
+Environment=HOME=/var/lib/gickup-backup
+StateDirectory=gickup-backup
+StateDirectoryMode=0700
+
+# Copied into a directory only this service can read; the script finds them
+# through $CREDENTIALS_DIRECTORY.
+LoadCredential=github-token:@CHECKOUT@/auth/github.token
+LoadCredential=gitlab-token:@CHECKOUT@/auth/gitlab.token
+LoadCredential=id_github:@CHECKOUT@/ssh/id_github
+LoadCredential=known_hosts:@CHECKOUT@/ssh/known_hosts
+
+# A first run clones everything, which can take most of a day; a oneshot
+# service otherwise times out after 90 seconds.
+TimeoutStartSec=20h
+# SIGINT to the script only (KillMode=mixed): the git process already running
+# finishes, then the script stops before the next repository. Anything left
+# after the grace period is killed.
+KillSignal=SIGINT
+KillMode=mixed
+TimeoutStopSec=500
+
+ProtectSystem=strict
+ReadWritePaths=@DEST@
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+NoNewPrivileges=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+SystemCallArchitectures=native

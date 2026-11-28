@@ -1,0 +1,274 @@
+#!/bin/sh
+
+# Mirrors the GitHub and gitlab.com repositories gickup used to back up, as
+# bare repositories under GICKUP_BACKUP_DEST laid out as
+# <site>/<owner>/<repo>.git (the layout gickup's "structured" option wrote, so
+# its mirrors are fetched rather than cloned again). Runs from
+# gickup-backup.service; see README.md, "Backup service".
+#
+# Listed and filtered as gickup's conf.yml did:
+#   * the token owner's own and starred GitHub repositories, over SSH, with at
+#     least one star, pushed to within GICKUP_BACKUP_MAX_AGE_DAYS and not
+#     archived;
+#   * the GICKUP_BACKUP_GITHUB_ORG organisation's repositories, over HTTPS,
+#     with the same star and age filters but archived ones included;
+#   * the token owner's own and starred gitlab.com projects, over HTTPS,
+#     unfiltered.
+#
+# Only branches and tags are fetched. A mirror is never deleted: one that is
+# no longer listed (deleted, renamed, archived or filtered out upstream) is
+# reported and kept as the last good copy.
+#
+# The tokens never reach a command line, the environment or a repository's
+# config: curl reads the Authorization header from stdin, and git asks this
+# script (as its GIT_ASKPASS helper) for the password at prompt time.
+
+set -eu
+
+# Askpass mode: git runs this script with its prompt as the only argument.
+if [ -n "${GICKUP_BACKUP_ASKPASS_TOKEN_FILE:-}" ]; then
+    case "${1:-}" in
+        Username*) printf '%s\n' "${GICKUP_BACKUP_ASKPASS_USER:-}" ;;
+        *) printf '%s\n' "$(tr -d '\r\n' < "${GICKUP_BACKUP_ASKPASS_TOKEN_FILE}")" ;;
+    esac
+    exit 0
+fi
+
+error() {
+    if [ -t 2 ]; then
+        printf '\n\033[31m✗\033[0m %s\n' "$*" >&2
+    else
+        printf '\n✗ %s\n' "$*" >&2
+    fi
+}
+
+die() {
+    error "$@"
+    exit 1
+}
+
+info() {
+    if [ -t 1 ]; then
+        printf '\n\033[32m→\033[0m %s\n' "$*"
+    else
+        printf '\n→ %s\n' "$*"
+    fi
+}
+
+success() {
+    if [ -t 1 ]; then
+        printf '\n\033[32m✓\033[0m %s\n' "$*"
+    else
+        printf '\n✓ %s\n' "$*"
+    fi
+}
+
+DRY_RUN="${GICKUP_BACKUP_DRY_RUN:-false}"
+for ARG in "$@"; do
+    case "${ARG}" in
+        --dry-run) DRY_RUN=true ;;
+        *) die "Unknown argument: ${ARG}" ;;
+    esac
+done
+
+MAX_AGE_DAYS="${GICKUP_BACKUP_MAX_AGE_DAYS:-1826}"
+GITHUB_ORG="${GICKUP_BACKUP_GITHUB_ORG:-funfair-tech}"
+DEST="${GICKUP_BACKUP_DEST:-/data/gickup}"
+GITHUB_API="${GICKUP_BACKUP_GITHUB_API:-https://api.github.com}"
+GITLAB_API="${GICKUP_BACKUP_GITLAB_API:-https://gitlab.com/api/v4}"
+
+case "${MAX_AGE_DAYS}" in
+    '' | *[!0-9]*) die "GICKUP_BACKUP_MAX_AGE_DAYS must be a whole number of days: ${MAX_AGE_DAYS}" ;;
+esac
+case "${GITHUB_ORG}" in
+    '' | *[!A-Za-z0-9_.-]*) die "GICKUP_BACKUP_GITHUB_ORG is not an organisation name: ${GITHUB_ORG}" ;;
+esac
+case "${DEST}" in
+    /*) ;;
+    *) die "GICKUP_BACKUP_DEST must be an absolute path: ${DEST}" ;;
+esac
+DEST="${DEST%/}"
+
+CRED_DIR="${CREDENTIALS_DIRECTORY:-}"
+[ -n "${CRED_DIR}" ] || die "CREDENTIALS_DIRECTORY is not set: run this through gickup-backup.service"
+GITHUB_TOKEN_FILE="${CRED_DIR}/github-token"
+GITLAB_TOKEN_FILE="${CRED_DIR}/gitlab-token"
+SSH_KEY="${CRED_DIR}/id_github"
+for FILE in "${GITHUB_TOKEN_FILE}" "${GITLAB_TOKEN_FILE}" "${SSH_KEY}"; do
+    [ -r "${FILE}" ] || die "Missing credential: ${FILE}"
+done
+
+# The ssh command line below is parsed by a shell, so its paths are quoted;
+# a path with a quote in it cannot be.
+STATE="${STATE_DIRECTORY:-${HOME:-}}"
+[ -n "${STATE}" ] || die "Neither STATE_DIRECTORY nor HOME is set"
+case "${CRED_DIR}${STATE}" in
+    *"'"*) die "Credential and state paths must not contain a single quote" ;;
+esac
+KNOWN_HOSTS="${STATE}/known_hosts"
+if [ -r "${CRED_DIR}/known_hosts" ]; then
+    KNOWN_HOSTS="${KNOWN_HOSTS} ${CRED_DIR}/known_hosts"
+fi
+# accept-new pins GitHub's host key on first contact (into the first file) and
+# refuses a changed one afterwards; a key in the known_hosts credential is
+# trusted from the start.
+# shellcheck disable=SC2089 # git runs GIT_SSH_COMMAND through a shell
+GIT_SSH_COMMAND="ssh -i '${SSH_KEY}' -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o 'UserKnownHostsFile=${KNOWN_HOSTS}'"
+# shellcheck disable=SC2090 # as above: the quotes are for git's shell
+export GIT_SSH_COMMAND
+GIT_TERMINAL_PROMPT=0
+GIT_ALLOW_PROTOCOL="${GIT_ALLOW_PROTOCOL:-https:ssh}"
+export GIT_TERMINAL_PROMPT GIT_ALLOW_PROTOCOL
+
+SELF="$(readlink -f "$0")"
+CUTOFF=$(($(date +%s) - MAX_AGE_DAYS * 86400))
+TAB="$(printf '\t')"
+
+WORK="$(mktemp -d)"
+trap 'rm -rf "${WORK}"' EXIT
+# systemd stops the service with SIGINT (KillSignal): the git process already
+# running is left to finish, then the run stops before the next repository.
+STOP=false
+trap 'STOP=true' INT TERM
+
+# $1 token file, $2 url. curl reads its config, header included, from stdin so
+# the token stays off its command line.
+api_get() {
+    TOKEN="$(tr -d '\r\n' < "$1")"
+    case "${TOKEN}" in
+        '' | *[!A-Za-z0-9_.-]*) die "The token in $1 is empty or has unexpected characters" ;;
+    esac
+    printf 'header = "Authorization: Bearer %s"\nurl = "%s"\n' "${TOKEN}" "$2" |
+        curl --config - --fail --silent --show-error --location --proto =https
+}
+
+# $1 token file, $2 url without the page number, $3 jq filter, then jq
+# arguments. Pages until an empty one; any failure stops the whole run, so a
+# partial listing can never be mistaken for repositories gone upstream.
+list_paginated() {
+    TOKEN_FILE="$1"
+    URL="$2"
+    FILTER="$3"
+    shift 3
+    PAGE=1
+    while :; do
+        api_get "${TOKEN_FILE}" "${URL}&per_page=100&page=${PAGE}" > "${WORK}/page.json" ||
+            die "Listing failed: ${URL}"
+        jq -e 'type == "array"' "${WORK}/page.json" > /dev/null 2>&1 ||
+            die "Listing did not return a list: ${URL}"
+        [ "$(jq 'length' "${WORK}/page.json")" -gt 0 ] || break
+        jq -r --argjson cutoff "${CUTOFF}" "$@" "${FILTER}" "${WORK}/page.json" ||
+            die "Listing could not be read: ${URL}"
+        PAGE=$((PAGE + 1))
+    done
+}
+
+# shellcheck disable=SC2016 # $cutoff, $ssh and $archived are jq variables
+GITHUB_FILTER='.[]
+  | select((.stargazers_count // 0) >= 1)
+  | select(((.pushed_at // "1970-01-01T00:00:00Z") | fromdateiso8601) >= $cutoff)
+  | select($archived or ((.archived // false) | not))
+  | [(if $ssh then .ssh_url else .clone_url end),
+     "github.com/" + .full_name + ".git",
+     "github"]
+  | @tsv'
+
+GITLAB_FILTER='.[]
+  | [.http_url_to_repo, "gitlab.com/" + .path_with_namespace + ".git", "gitlab"]
+  | @tsv'
+
+info "Listing repositories..."
+{
+    list_paginated "${GITHUB_TOKEN_FILE}" "${GITHUB_API}/user/repos?affiliation=owner" "${GITHUB_FILTER}" \
+        --argjson ssh true --argjson archived false
+    list_paginated "${GITHUB_TOKEN_FILE}" "${GITHUB_API}/user/starred?sort=created" "${GITHUB_FILTER}" \
+        --argjson ssh true --argjson archived false
+    list_paginated "${GITHUB_TOKEN_FILE}" "${GITHUB_API}/orgs/${GITHUB_ORG}/repos?type=all" "${GITHUB_FILTER}" \
+        --argjson ssh false --argjson archived true
+    list_paginated "${GITLAB_TOKEN_FILE}" "${GITLAB_API}/projects?owned=true&simple=true" "${GITLAB_FILTER}"
+    list_paginated "${GITLAB_TOKEN_FILE}" "${GITLAB_API}/projects?starred=true&simple=true" "${GITLAB_FILTER}"
+} > "${WORK}/listed.tsv"
+
+# A repository listed twice (an own repository that is also starred) is
+# mirrored once, through the first listing that names it.
+awk -F '\t' '!seen[$2]++' "${WORK}/listed.tsv" > "${WORK}/repos.tsv"
+cut -f 2 "${WORK}/repos.tsv" | LC_ALL=C sort > "${WORK}/listed-paths.txt"
+
+# $1 path relative to DEST: <site>/<owner>[/<group>...]/<repo>.git, with no
+# empty, "." or ".." component that could reach outside DEST.
+valid_path() {
+    case "/$1/" in
+        *//* | */./* | */../*) return 1 ;;
+    esac
+    case "$1" in
+        github.com/*/*.git | gitlab.com/*/*.git) return 0 ;;
+    esac
+    return 1
+}
+
+# $1 url, $2 path relative to DEST, $3 provider
+mirror() {
+    case "$3" in
+        github) USER_NAME=x-access-token TOKEN_FILE="${GITHUB_TOKEN_FILE}" ;;
+        gitlab) USER_NAME=oauth2 TOKEN_FILE="${GITLAB_TOKEN_FILE}" ;;
+        *) error "Unknown provider for $2: $3" && return 1 ;;
+    esac
+    TARGET="${DEST}/$2"
+    MIRROR_PATH="$2"
+    if [ -d "${TARGET}" ]; then
+        VERB=Fetching
+        set -- -C "${TARGET}" fetch --prune --quiet -- "$1" \
+            '+refs/heads/*:refs/heads/*' '+refs/tags/*:refs/tags/*'
+    else
+        VERB=Cloning
+        set -- clone --bare --quiet -- "$1" "${TARGET}"
+    fi
+    if [ "${DRY_RUN}" = "true" ]; then
+        info "${VERB} ${MIRROR_PATH} (dry run, nothing written)"
+        return 0
+    fi
+    info "${VERB} ${MIRROR_PATH}"
+    # A no-op when fetching, as the existing target's parent already exists.
+    mkdir -p "${TARGET%/*}" || return 1
+    # The URL carries no credentials and credential.helper is cleared, so the
+    # token is never stored; git asks this script for it instead.
+    GICKUP_BACKUP_ASKPASS_TOKEN_FILE="${TOKEN_FILE}" \
+        GICKUP_BACKUP_ASKPASS_USER="${USER_NAME}" \
+        GIT_ASKPASS="${SELF}" \
+        git -c credential.helper= "$@" < /dev/null
+}
+
+TOTAL=0
+FAILURES=0
+while IFS="${TAB}" read -r URL REPO_PATH PROVIDER; do
+    [ "${STOP}" = "false" ] || break
+    TOTAL=$((TOTAL + 1))
+    if [ -z "${URL}" ] || ! valid_path "${REPO_PATH}"; then
+        error "Skipping an unexpected listing entry: ${REPO_PATH}"
+        FAILURES=$((FAILURES + 1))
+        continue
+    fi
+    if ! mirror "${URL}" "${REPO_PATH}" "${PROVIDER}"; then
+        error "Failed to back up ${REPO_PATH}"
+        FAILURES=$((FAILURES + 1))
+    fi
+done < "${WORK}/repos.tsv"
+
+[ "${STOP}" = "false" ] || die "Stopped after ${TOTAL} repositories, before the backup finished"
+
+# Mirrors that are no longer listed are reported and kept, never removed.
+if [ -d "${DEST}" ]; then
+    find "${DEST}" -mindepth 2 -type d -name '*.git' -prune -print |
+        cut -c "$((${#DEST} + 2))-" | LC_ALL=C sort > "${WORK}/disk-paths.txt"
+    LC_ALL=C comm -23 "${WORK}/disk-paths.txt" "${WORK}/listed-paths.txt" > "${WORK}/stale.txt"
+    while IFS= read -r STALE; do
+        info "Not listed upstream, kept: ${STALE}"
+    done < "${WORK}/stale.txt"
+fi
+
+[ "${FAILURES}" -eq 0 ] || die "${FAILURES} of ${TOTAL} repositories failed to back up"
+if [ "${DRY_RUN}" = "true" ]; then
+    success "Dry run complete: ${TOTAL} repositories listed, nothing written"
+else
+    success "Backup complete: ${TOTAL} repositories"
+fi
