@@ -1,0 +1,8 @@
+[
+  {
+    "path_with_namespace": "me/group/sub-proj",
+    "http_url_to_repo": "file://@ORIGIN@/gl-proj.git",
+    "star_count": 0,
+    "archived": true
+  }
+]

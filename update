@@ -1,6 +1,21 @@
 #! /bin/sh
 
-[ -d "/data/gickup" ] || sudo mkdir -p "/data/gickup"
+die() {
+    if [ -t 2 ]; then
+        printf '\n\033[31m✗\033[0m %s\n' "$*" >&2
+    else
+        printf '\n✗ %s\n' "$*" >&2
+    fi
+    exit 1
+}
+
+info() {
+    if [ -t 1 ]; then
+        printf '\n\033[32m→\033[0m %s\n' "$*"
+    else
+        printf '\n→ %s\n' "$*"
+    fi
+}
 
 # sh has already parsed this script, so changes the pull brings to it would
 # only take effect on the next run. Re-run the freshly pulled copy once.
@@ -9,18 +24,26 @@ if [ "${UPDATE_ALREADY_PULLED:-}" != "1" ]; then
     UPDATE_ALREADY_PULLED=1 exec "$(readlink -f "$0")" "$@"
 fi
 
+SCRIPT_DIR="$(dirname "$(readlink -f "$0")")"
 
-sudo docker volume create \
-  --opt type=none \
-  --opt o=bind \
-  --opt device=/data/gickup \
-  gickup_data
+# The backup used to run in Docker (gickup, kept up to date by Watchtower).
+# Remove those containers once; the gickup_data volume is only a bind mount of
+# the mirrors' directory, so it is left alone and the mirrors stay where they
+# are.
+if command -v docker > /dev/null 2>&1; then
+    for CONTAINER in gickup-backup watchtower; do
+        if sudo docker container inspect "${CONTAINER}" > /dev/null 2>&1; then
+            info "Removing the old ${CONTAINER} container..."
+            # The same grace period gickup had, so a fetch in progress finishes.
+            sudo docker stop -t 500 "${CONTAINER}" > /dev/null || die "Failed to stop ${CONTAINER}"
+            sudo docker rm "${CONTAINER}" > /dev/null || die "Failed to remove ${CONTAINER}"
+        fi
+    done
+fi
 
+# The nightly backup (a systemd timer). See README.md, "Backup service".
+sudo "${SCRIPT_DIR}/backup/install" || exit 1
 
-sudo docker compose pull && sudo docker compose up -d
-
-# Egress lockdown (firewalld policies); observation mode unless
-# GICKUP_FIREWALL_ENFORCE=true in .env. Runs after the containers exist,
-# because Docker creates the docker zone the policies refer to. See README.md,
-# "Host firewall".
-sudo "$(dirname "$(readlink -f "$0")")/firewall/configure" || exit 1
+# Egress lockdown (one nftables table); observation mode unless
+# GICKUP_FIREWALL_ENFORCE=true in .env. See README.md, "Host firewall".
+sudo "${SCRIPT_DIR}/firewall/configure" || exit 1

@@ -1,0 +1,115 @@
+#!/bin/sh
+
+# Installs the nightly repository backup: backup/git-backup as
+# /usr/local/bin/gickup-git-backup, run by gickup-backup.timer as the
+# gickup-backup system user. Called by ../update as root; safe to re-run.
+#
+# GICKUP_BACKUP_DEST in ../.env moves the mirrors (default /data/gickup, where
+# gickup kept them); the service reads its other settings from ../.env itself.
+# See README.md, "Backup service".
+
+set -eu
+
+die() {
+    if [ -t 2 ]; then
+        printf '\n\033[31m✗\033[0m %s\n' "$*" >&2
+    else
+        printf '\n✗ %s\n' "$*" >&2
+    fi
+    exit 1
+}
+
+info() {
+    if [ -t 1 ]; then
+        printf '\n\033[32m→\033[0m %s\n' "$*"
+    else
+        printf '\n→ %s\n' "$*"
+    fi
+}
+
+success() {
+    if [ -t 1 ]; then
+        printf '\n\033[32m✓\033[0m %s\n' "$*"
+    else
+        printf '\n✓ %s\n' "$*"
+    fi
+}
+
+[ "$(id -u)" -eq 0 ] || die "must run as root"
+
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+CHECKOUT="$(dirname "${SCRIPT_DIR}")"
+ENV_FILE="${CHECKOUT}/.env"
+SERVICE_USER=gickup-backup
+# Records which destination has been handed to the service user, so the
+# recursive chown runs once per destination rather than on every update.
+CHOWN_MARKER=/var/lib/credfeto-gickup/gickup-backup-chowned
+
+env_value() {
+    [ -f "${ENV_FILE}" ] || return 0
+    grep -E "^[[:space:]]*$1[[:space:]]*=" "${ENV_FILE}" | tail -n 1 | cut -d= -f2- |
+        sed 's/^[[:space:]]*//;s/[[:space:]]*$//;s/^"//;s/"$//'
+}
+
+MISSING=""
+for TOOL in git ssh curl jq; do
+    command -v "${TOOL}" > /dev/null 2>&1 || MISSING="${MISSING} ${TOOL}"
+done
+[ -z "${MISSING}" ] || die "Missing commands:${MISSING}; install the git, openssh, curl and jq packages"
+
+DEST="$(env_value GICKUP_BACKUP_DEST)"
+DEST="${DEST:-/data/gickup}"
+DEST="${DEST%/}"
+
+# Both paths are written into the unit files: sed needs them free of its
+# delimiter and metacharacters, and systemd treats % and whitespace specially.
+for VALUE in "${CHECKOUT}" "${DEST}"; do
+    case "${VALUE}" in
+        /*) ;;
+        *) die "Not an absolute path: ${VALUE}" ;;
+    esac
+    case "${VALUE}" in
+        *[!A-Za-z0-9/._-]*) die "Unsupported characters in path: ${VALUE}" ;;
+    esac
+done
+
+for FILE in auth/github.token auth/gitlab.token ssh/id_github; do
+    [ -f "${CHECKOUT}/${FILE}" ] || die "Missing ${CHECKOUT}/${FILE}; see README.md, \"Backup service\""
+done
+
+info "Installing the repository backup (into ${DEST})..."
+
+if ! id "${SERVICE_USER}" > /dev/null 2>&1; then
+    NOLOGIN="$(command -v nologin || printf '%s' /usr/bin/nologin)"
+    useradd --system --user-group --home-dir "/var/lib/${SERVICE_USER}" --no-create-home \
+        --shell "${NOLOGIN}" "${SERVICE_USER}" || die "Failed to create the ${SERVICE_USER} user"
+fi
+
+# gickup ran as root, so its mirrors are root's until handed over once.
+mkdir -p "${DEST}"
+install -d -m 755 "$(dirname "${CHOWN_MARKER}")"
+if [ "$(cat "${CHOWN_MARKER}" 2> /dev/null || true)" != "${DEST}" ]; then
+    info "Handing ${DEST} to ${SERVICE_USER}..."
+    chown -R -h "${SERVICE_USER}:${SERVICE_USER}" "${DEST}"
+    printf '%s\n' "${DEST}" > "${CHOWN_MARKER}"
+fi
+
+install -m 755 "${SCRIPT_DIR}/git-backup" /usr/local/bin/gickup-git-backup
+
+set -- -e "s|@CHECKOUT@|${CHECKOUT}|g" -e "s|@DEST@|${DEST}|g"
+# The known_hosts credential is optional; systemd fails the unit when a
+# LoadCredential= file is missing.
+[ -f "${CHECKOUT}/ssh/known_hosts" ] || set -- "$@" -e '/^LoadCredential=known_hosts:/d'
+UNIT_DIR=/etc/systemd/system
+sed "$@" "${SCRIPT_DIR}/gickup-backup.service" > "${UNIT_DIR}/gickup-backup.service.tmp"
+chmod 644 "${UNIT_DIR}/gickup-backup.service.tmp"
+mv "${UNIT_DIR}/gickup-backup.service.tmp" "${UNIT_DIR}/gickup-backup.service"
+install -m 644 "${SCRIPT_DIR}/gickup-backup.timer" "${UNIT_DIR}/gickup-backup.timer"
+
+systemctl daemon-reload
+systemctl enable gickup-backup.timer > /dev/null 2>&1
+# restart, not just enable --now: an already-active timer keeps its old
+# schedule otherwise.
+systemctl restart gickup-backup.timer
+
+success "Repository backup installed (gickup-backup.timer)."
