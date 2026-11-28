@@ -192,7 +192,7 @@ info "Listing repositories..."
 # A repository listed twice (an own repository that is also starred) is
 # mirrored once, through the first listing that names it.
 awk -F '\t' '!seen[$2]++' "${WORK}/listed.tsv" > "${WORK}/repos.tsv"
-cut -f 2 "${WORK}/repos.tsv" | LC_ALL=C sort -u > "${WORK}/listed-paths.txt"
+cut -f 2 "${WORK}/repos.tsv" | LC_ALL=C sort > "${WORK}/listed-paths.txt"
 
 # $1 path relative to DEST: <site>/<owner>[/<group>...]/<repo>.git, with no
 # empty, "." or ".." component that could reach outside DEST.
@@ -237,8 +237,6 @@ mirror() {
         GIT_ASKPASS="${SELF}" \
         git -c credential.helper= "$@" < /dev/null
 }
-
-[ "${DRY_RUN}" = "true" ] || mkdir -p "${DEST}"
 
 TOTAL=0
 FAILURES=0
