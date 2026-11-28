@@ -1,0 +1,34 @@
+[
+  {
+    "full_name": "me/own-a",
+    "ssh_url": "file://@ORIGIN@/own-a.git",
+    "clone_url": "https://example.invalid/me/own-a.git",
+    "stargazers_count": 2,
+    "pushed_at": "@RECENT@",
+    "archived": false
+  },
+  {
+    "full_name": "me/own-unstarred",
+    "ssh_url": "file://@ORIGIN@/own-a.git",
+    "clone_url": "https://example.invalid/me/own-unstarred.git",
+    "stargazers_count": 0,
+    "pushed_at": "@RECENT@",
+    "archived": false
+  },
+  {
+    "full_name": "me/own-old",
+    "ssh_url": "file://@ORIGIN@/own-a.git",
+    "clone_url": "https://example.invalid/me/own-old.git",
+    "stargazers_count": 5,
+    "pushed_at": "2001-01-01T00:00:00Z",
+    "archived": false
+  },
+  {
+    "full_name": "me/own-archived",
+    "ssh_url": "file://@ORIGIN@/own-a.git",
+    "clone_url": "https://example.invalid/me/own-archived.git",
+    "stargazers_count": 3,
+    "pushed_at": "@RECENT@",
+    "archived": true
+  }
+]

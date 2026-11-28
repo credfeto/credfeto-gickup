@@ -1,0 +1,10 @@
+[Unit]
+Description=Mirror the GitHub and gitlab.com repositories nightly
+
+[Timer]
+OnCalendar=*-*-* 03:27:00 Europe/London
+# Catch up after the host was off at 03:27.
+Persistent=true
+
+[Install]
+WantedBy=timers.target
