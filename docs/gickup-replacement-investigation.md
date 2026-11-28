@@ -2,6 +2,8 @@
 
 This document records whether the nightly gickup backup can be replaced by a small shell script that lists repositories through the provider REST APIs with a personal access token (PAT) and then runs plain `git clone` / `git fetch` on bare repositories.
 
+> **Implemented** as `backup/git-backup`, run by a systemd timer on the host (the first option in [Scheduling and runtime](#6-scheduling-and-runtime)); gickup, Watchtower, `docker-compose.yml` and `conf.yml` are gone. The layout on the host was confirmed as `<site>/<owner>/<repo>.git` under `/data/gickup`. Unlike the sketch below, the token owner's own and starred GitHub repositories are still fetched over SSH, as gickup did. See README.md, "Backup service". The rest of this document is the investigation as written.
+
 ## Recommendation
 
 **Adopt**, subject to one precondition: the host measurement in [Memory footprint](#2-memory-footprint) must confirm that gickup's peak memory is materially higher than the script's on the same repository set. Memory could not be measured in the environment this investigation was written in, so that comparison is still outstanding.
