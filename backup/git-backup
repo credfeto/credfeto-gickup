@@ -214,23 +214,22 @@ mirror() {
         *) error "Unknown provider for $2: $3" && return 1 ;;
     esac
     TARGET="${DEST}/$2"
+    MIRROR_PATH="$2"
     if [ -d "${TARGET}" ]; then
-        if [ "${DRY_RUN}" = "true" ]; then
-            info "Fetching $2 (dry run, nothing written)"
-            return 0
-        fi
-        info "Fetching $2"
+        VERB=Fetching
         set -- -C "${TARGET}" fetch --prune --quiet -- "$1" \
             '+refs/heads/*:refs/heads/*' '+refs/tags/*:refs/tags/*'
     else
-        if [ "${DRY_RUN}" = "true" ]; then
-            info "Cloning $2 (dry run, nothing written)"
-            return 0
-        fi
-        info "Cloning $2"
-        mkdir -p "${TARGET%/*}" || return 1
+        VERB=Cloning
         set -- clone --bare --quiet -- "$1" "${TARGET}"
     fi
+    if [ "${DRY_RUN}" = "true" ]; then
+        info "${VERB} ${MIRROR_PATH} (dry run, nothing written)"
+        return 0
+    fi
+    info "${VERB} ${MIRROR_PATH}"
+    # A no-op when fetching, as the existing target's parent already exists.
+    mkdir -p "${TARGET%/*}" || return 1
     # The URL carries no credentials and credential.helper is cleared, so the
     # token is never stored; git asks this script for it instead.
     GICKUP_BACKUP_ASKPASS_TOKEN_FILE="${TOKEN_FILE}" \
