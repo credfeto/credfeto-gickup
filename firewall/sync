@@ -5,7 +5,7 @@
 # table, pulls the checkout, and re-runs ./configure when anything under
 # firewall/ changed since the commit ./configure last applied (for example
 # the daily egress-ranges commit). It does not run the full ../update:
-# container and compose changes still wait for that.
+# changes to the backup service (backup/) still wait for that.
 #
 # Runs as root via gickup-firewall-sync.timer, which ./configure installs.
 
